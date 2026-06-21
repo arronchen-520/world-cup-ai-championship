@@ -28,6 +28,9 @@ def test_research_uses_basic_depth_and_category_limits(monkeypatch):
 
     assert {call["search_depth"] for call in calls} == {"basic"}
     assert sorted(call["max_results"] for call in calls) == [3, 4, 5]
-    assert sum("include_domains" in call for call in calls) == 1
+    assert all("include_domains" not in call for call in calls)
     assert [len(search["results"][0]["content"]) for search in research["searches"]] == [1200, 1600, 800]
-    assert all(len(query) < 400 for query in research["queries"])
+    assert [search["category"] for search in research["searches"]] == [
+        "team_news_form_h2h", "betting_markets", "tactics_venue_weather_referee",
+    ]
+    assert all(len(search["query"]) < 400 for search in research["searches"])

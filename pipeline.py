@@ -11,7 +11,7 @@ from database import (
 )
 from services import (
     analyst_prompt, evaluate_analysts, get_fixtures_football_data, master_prompt,
-    openrouter_chat, research_match, run_analysts, summarize_research,
+    openrouter_chat, research_match, run_analysts,
 )
 
 
@@ -58,23 +58,13 @@ def run_for_date(day: date) -> list[dict]:
     for match in fixtures:
         save_match(match)
         raw_research = research_match(match)
-        try:
-            research_digest = summarize_research(match, raw_research)
-            research_for_models = research_digest
-        except Exception as error:
-            research_digest = {
-                "summary_status": "fallback_raw",
-                "summary_error": type(error).__name__,
-            }
-            research_for_models = raw_research
-        outputs = run_analysts(MODELS, analyst_prompt(match, research_for_models))
+        outputs = run_analysts(MODELS, analyst_prompt(match, raw_research))
         final = openrouter_chat(
             MASTER_MODEL,
-            [{"role": "user", "content": master_prompt(match, research_for_models, outputs)}],
+            [{"role": "user", "content": master_prompt(match, raw_research, outputs)}],
             temperature=0.1,
             max_tokens=MASTER_MAX_TOKENS,
         )
-        stored_research = {"raw": raw_research, "digest": research_digest}
-        save_analysis(match["match_key"], stored_research, outputs, final)
+        save_analysis(match["match_key"], {"raw": raw_research}, outputs, final)
         results.append({"match": match, "model_outputs": outputs, "final_output": final})
     return results

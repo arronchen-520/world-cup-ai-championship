@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Annotated, Any
-from urllib.parse import urlparse
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -18,60 +17,12 @@ from config import (
     ANALYST_MAX_TOKENS, BETTING_CONTENT_CHARS, BETTING_MAX_RESULTS, CONTEXT_CONTENT_CHARS,
     CONTEXT_MAX_RESULTS, EVALUATION_MAX_TOKENS, EVALUATION_MODEL, FOOTBALL_DATA_API_KEY,
     FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL, MATCH_TIMEZONE, OPENROUTER_API_KEY,
-    OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
-    RESEARCH_SUMMARY_MAX_TOKENS, RESEARCH_SUMMARY_MODEL, TAVILY_API_KEY, TAVILY_SEARCH_DEPTH,
+    OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS, TAVILY_API_KEY, TAVILY_SEARCH_DEPTH,
     TEAM_NEWS_CONTENT_CHARS, TEAM_NEWS_MAX_RESULTS,
 )
 
 
 SOCIAL_DOMAINS = ["instagram.com", "facebook.com", "x.com", "tiktok.com", "youtube.com"]
-BETTING_ALLOWED_DOMAINS = [
-    "actionnetwork.com",
-    "bet365.com",
-    "betmgm.com",
-    "caesars.com",
-    "covers.com",
-    "draftkings.com",
-    "espn.com",
-    "fanduel.com",
-    "foxsports.com",
-    "ladbrokes.com",
-    "oddschecker.com",
-    "oddspedia.com",
-    "paddypower.com",
-    "racingpost.com",
-    "sports.yahoo.com",
-    "thelines.com",
-    "williamhill.com",
-]
-
-
-class EvidencePoint(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    claim: str = Field(min_length=1, max_length=160)
-    source_url: str | None = Field(default=None, max_length=600)
-
-
-class BettingPoint(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    market: str = Field(min_length=1, max_length=100)
-    price_or_probability: str = Field(min_length=1, max_length=120)
-    source_url: str | None = Field(default=None, max_length=600)
-    caveat: str | None = Field(default=None, max_length=120)
-
-
-DigestGap = Annotated[str, Field(min_length=1, max_length=160)]
-
-
-class ResearchDigest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    team_news_form_h2h: list[EvidencePoint] = Field(default_factory=list, max_length=5)
-    betting_markets: list[BettingPoint] = Field(default_factory=list, max_length=6)
-    tactics_venue_weather: list[EvidencePoint] = Field(default_factory=list, max_length=3)
-    conflicts_and_gaps: list[DigestGap] = Field(default_factory=list, max_length=4)
 
 
 class RankedAnalyst(BaseModel):
@@ -223,20 +174,22 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
     fixture = f"{home} vs {away} FIFA World Cup 2026 {display_date}"
     search_specs = [
         {
+            "category": "team_news_form_h2h",
             "query": f"{fixture} latest team news injuries suspensions predicted lineups last 5 matches head to head",
             "max_results": TEAM_NEWS_MAX_RESULTS,
             "content_chars": TEAM_NEWS_CONTENT_CHARS,
         },
         {
+            "category": "betting_markets",
             "query": (
                 f"{fixture} latest bookmaker odds 1X2 double chance draw no bet Asian handicap "
                 "totals over under 1.5 2.5 3.5 both teams to score"
             ),
             "max_results": BETTING_MAX_RESULTS,
             "content_chars": BETTING_CONTENT_CHARS,
-            "allowed_domains": BETTING_ALLOWED_DOMAINS,
         },
         {
+            "category": "tactics_venue_weather_referee",
             "query": f"{fixture} tactical preview venue weather referee {referee_names}".strip(),
             "max_results": CONTEXT_MAX_RESULTS,
             "content_chars": CONTEXT_CONTENT_CHARS,
@@ -251,22 +204,13 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
             "include_answer": False,
             "exclude_domains": SOCIAL_DOMAINS,
         }
-        if spec.get("allowed_domains"):
-            search_args["include_domains"] = spec["allowed_domains"]
         response = client.search(
             **search_args,
         )
         raw_results = response.get("results", [])
-        if spec.get("allowed_domains"):
-            raw_results = [
-                result for result in raw_results
-                if any(
-                    (hostname := (urlparse(result.get("url") or "").hostname or "").lower()) == domain
-                    or hostname.endswith(f".{domain}")
-                    for domain in spec["allowed_domains"]
-                )
-            ]
         return {
+            "category": spec["category"],
+            "query": spec["query"],
             "results": [
                 {
                     "title": result.get("title"),
@@ -280,43 +224,16 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
 
     with ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(search, search_specs))
-    return {"queries": [spec["query"] for spec in search_specs], "searches": results}
+    return {"searches": results}
 
 
-def summarize_research(match: dict[str, Any], research: dict[str, Any]) -> dict[str, Any]:
-    """Compress Tavily evidence once, then validate the shared digest with Pydantic."""
-    schema = ResearchDigest.model_json_schema()
-    prompt = f"""Summarize the search evidence for {match['home_team']} vs {match['away_team']}.
-Return one JSON object matching the supplied schema. Use Simplified Chinese for claims.
-Preserve source URLs, quoted odds/lines, and uncertainty. Do not infer missing current facts.
-For head-to-head, note when old meetings have limited relevance. For betting, capture all available
-1X2, double-chance, draw-no-bet, Asian handicap, BTTS, and totals 1.5/2.5/3.5 markets.
-Keep only decision-relevant evidence and explicitly list contradictions or missing markets.
-
-JSON schema:
-{json.dumps(schema, ensure_ascii=False)}
-
-Search evidence:
-{json.dumps(research, ensure_ascii=False)}"""
-    response = openrouter_chat(
-        RESEARCH_SUMMARY_MODEL,
-        [{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=RESEARCH_SUMMARY_MAX_TOKENS,
-        response_format={"type": "json_object"},
-    ).strip()
-    if response.startswith("```"):
-        response = response.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    return ResearchDigest.model_validate_json(response).model_dump(mode="json")
-
-
-def analyst_prompt(match: dict[str, Any], research_digest: dict[str, Any]) -> str:
+def analyst_prompt(match: dict[str, Any], research: dict[str, Any]) -> str:
     return f"""You are one independent football analyst in an AI championship.
 Analyze {match['home_team']} vs {match['away_team']} in {match['competition']} on {match['match_date']}.
 Fixture details: group={match.get('group_name') or 'unknown'}, kickoff={match.get('kickoff') or 'unknown'},
 venue={match.get('venue') or 'unknown'}, referees={json.dumps(match.get('referees', []), ensure_ascii=False)}.
 
-Use the supplied evidence digest as current evidence, but also add your own independent football analysis,
+Use the supplied bounded Tavily results as current evidence, but also add your own independent football analysis,
 tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
 Never invent current injuries, lineups, or odds. Flag stale/conflicting information and account for bookmaker margin.
 Treat every result and predicted score as regulation time only, excluding extra time and penalties.
@@ -338,8 +255,8 @@ When evidence is weak, recommend “不下注”. Put the short actionable answe
 快速结论不超过 180 个中文字符；详细分析不超过 600 个中文字符。
 Write the entire response in Simplified Chinese, including all headings and explanations.
 
-Research digest:
-{json.dumps(research_digest, ensure_ascii=False)}"""
+Research results:
+{json.dumps(research, ensure_ascii=False)}"""
 
 
 def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
@@ -364,7 +281,7 @@ def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
     return outputs
 
 
-def master_prompt(match: dict[str, Any], research_digest: dict[str, Any], outputs: dict[str, str]) -> str:
+def master_prompt(match: dict[str, Any], research: dict[str, Any], outputs: dict[str, str]) -> str:
     return f"""Act as the chair of a football prediction panel. Synthesize the independent reports below.
 Do not decide by majority vote alone: weigh source quality, reasoning, market prices, injuries, and disagreement.
 Never invent facts or odds. If there is no defensible edge, explicitly recommend No bet.
@@ -387,7 +304,7 @@ If there is no defensible edge, explicitly recommend “不下注”. Put the fi
 Write the entire final recommendation in Simplified Chinese.
 
 Match: {json.dumps(match, default=str)}
-Research digest: {json.dumps(research_digest, ensure_ascii=False)}
+Research results: {json.dumps(research, ensure_ascii=False)}
 Panel reports: {json.dumps(outputs, ensure_ascii=False)}"""
 
 

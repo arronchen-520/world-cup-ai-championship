@@ -9,11 +9,10 @@
    normalizes stable IDs, teams, UTC kickoff, venue, stage, and group from its JSON response.
 4. Three Tavily searches run concurrently for every match: team availability/form, betting markets,
    and tactical/venue context.
-5. DeepSeek compresses the bounded snippets once into a Pydantic-validated evidence digest.
-6. All configured analyst models run concurrently through OpenRouter and reuse that digest.
-7. The master model receives the digest and every analyst opinion, then writes a calibrated synthesis.
-8. Fixtures, raw evidence, digest, analyses, evaluations, and standings are upserted into SQLite.
-9. `app.py` displays analyst cards, the master answer, post-match review, and cumulative leaderboard.
+5. All configured analyst models run concurrently through OpenRouter and reuse the bounded Basic results.
+6. The master model receives those results and every analyst opinion, then writes a calibrated synthesis.
+7. Fixtures, raw evidence, analyses, evaluations, and standings are upserted into SQLite.
+8. `app.py` displays analyst cards, the master answer, post-match review, and cumulative leaderboard.
 
 The app does not scrape bookmakers directly. Tavily returns public web search evidence, which may be
 stale or region-specific. Tavily's generated answers are disabled throughout; prompts require the configured
@@ -58,17 +57,18 @@ and the schema can later gain results, evaluation scores, or users. It still rem
 - `research_match(match)` launches three Tavily searches in a thread pool. Search is I/O-bound, so threads
   reduce wall-clock time without complicated async code. Queries include both teams, World Cup 2026, the
   Central match date, and the specific evidence category; social-media domains are excluded. `basic` depth
-  costs one Tavily credit per search and returns one NLP page summary per URL.
+  costs one Tavily credit per search and returns one NLP page summary per URL. Each returned group carries an
+  explicit category and query so downstream models can distinguish team, betting, and context evidence.
 - Query strings intentionally use compact entity-and-intent terms rather than conversational questions:
   team names and tournament identify the entity, while terms such as `predicted lineups` or `double chance`
   steer retrieval. Each query remains below Tavily's recommended 400-character limit.
 - `include_answer=False` disables Tavily's separate LLM-generated answer. The response still contains ranked
   `results`, each with title, URL, relevance score, and `content`; those four bounded fields are retained as
-  raw evidence for the summarizer and audit storage.
+  evidence for the analyst panel, master, and audit storage.
 - Betting search names the markets the analysts must compare: 1X2, double chance, draw-no-bet, Asian
   handicap, totals 1.5/2.5/3.5, and both-teams-to-score. These terms steer semantic retrieval rather than
-  guarantee that every result contains every market. Betting results are restricted to a curated domain
-  list and checked again locally because odds are the most decision-sensitive evidence category.
+  guarantee that every result contains every market. Betting search excludes social sites but has no domain
+  allowlist, because strict filtering often removes all relevant odds pages.
 - Result caps deliberately favor betting evidence: team news uses `4 x 1,200` characters, betting uses
   `5 x 1,600`, and tactical/venue/weather context uses `3 x 800`. These are worst-case ceilings; short
   Tavily summaries remain short. Across the three searches the theoretical maximum falls to 15,200
@@ -79,9 +79,6 @@ and the schema can later gain results, evaluation scores, or users. It still rem
   that model; one provider failure does not cancel the panel.
 - `master_prompt(...)` asks for synthesis rather than majority vote, explicitly permits `No bet`, and
   requires the final recommendation in Simplified Chinese.
-- `summarize_research(match, research)` makes one inexpensive DeepSeek call using JSON mode, then validates
-  field lengths, list sizes, and unknown fields with Pydantic. Analysts reuse the validated digest, while the
-  original snippets remain in SQLite. If summarization fails, the bounded raw evidence is used for that run.
 - `evaluate_analysts(match, actual_result, outputs)` sends only the five analyst reports, never the master,
   to DeepSeek. Pydantic requires each model and each rank exactly once. Python assigns `6 - rank` points so
   the language model cannot miscalculate the 5-to-1 score.
@@ -92,7 +89,7 @@ and the schema can later gain results, evaluation scores, or users. It still rem
   midnight, a 23:00 kickoff may still be running, so unfinished matches remain queued for a later daily run.
 - `run_for_date(day)` owns the end-to-end sequence. It initializes storage, evaluates eligible past fixtures,
   then discovers fixtures,
-  researches each match, creates the shared digest, gets panel opinions, calls the master at lower
+  researches each match, gets panel opinions, calls the master at lower
   temperature, saves, and returns display-ready results. A configurable match ceiling limits accidental spend.
 
 ### `run_daily.py`
@@ -177,11 +174,12 @@ Hugging Face Spaces, Render, or another persistent Python host, or publish a sta
 
 ## 4. Cost, quality, and safety
 
-- Before kickoff, one match produces three Tavily searches, one DeepSeek summary call, five analyst calls,
-  and one master call. After completion it produces one additional DeepSeek evaluation call.
+- Before kickoff, one match produces three Tavily searches, five analyst calls, and one master call. After
+  completion it produces one additional DeepSeek evaluation call.
 - Team news is capped at 4 results / 1,200 characters each, betting at 5 / 1,600, and tactics/weather at
-  3 / 800. Output caps are 1,100 tokens for the digest, 1,200 per analyst, 1,800 for the master, and
-  1,800 for the post-match evaluator; `MAX_MATCHES_PER_RUN=8` limits the daily multiplier.
+  3 / 800. These Basic-search caps bound the shared input without another LLM summarizer. Output caps are
+  1,200 per analyst, 1,800 for the master, and 1,800 for the post-match evaluator;
+  `MAX_MATCHES_PER_RUN=8` limits the daily multiplier.
 - Prompts also cap Chinese response length: 180/600 characters for analyst summary/detail and 220/800 for
   master conclusion/analysis. This encourages graceful shortening before the hard token ceiling is reached.
 - The largest cost lever is `ENABLED_MODEL_IDS`: three analysts instead of five cuts analyst calls by 40%.

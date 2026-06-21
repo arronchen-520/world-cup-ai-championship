@@ -38,10 +38,9 @@ five stored analyst outputs are judged; late matches remain queued for a later r
 
 Tavily uses `basic` depth: team news returns 4 results capped at 1,200 characters each, betting returns 5 at
 1,600, and tactical context returns 3 at 800. Generated Tavily answers are disabled; models receive retrieved
-page summaries. Betting results also use a curated source-domain filter. One DeepSeek call compresses those
-snippets into a Pydantic-validated digest reused by the analyst panel and master; raw snippets remain stored
-for audit. Summary/analyst/master/evaluation output caps are 1,100/1,200/1,800/1,800 tokens. See
-`.env.example` for overrides.
+page summaries directly. Betting search is not restricted to an allowlist; `max_results=5` is a ceiling, so
+Tavily may return fewer when it finds fewer relevant pages. Raw bounded snippets remain stored for audit.
+Analyst/master/evaluation output caps are 1,200/1,800/1,800 tokens. See `.env.example` for overrides.
 
 Model slugs change over time and availability varies by OpenRouter account. A failed analyst is
 recorded as unavailable while the other analysts continue. Verify the `MODELS` entries against your
