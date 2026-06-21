@@ -9,7 +9,7 @@
    normalizes stable IDs, teams, UTC kickoff, venue, stage, and group from its JSON response.
 4. Three Tavily searches run concurrently for every match: team availability/form, betting markets,
    and tactical/venue context.
-5. All configured analyst models run concurrently through OpenRouter and reuse the bounded Basic results.
+5. All configured analyst models run concurrently through OpenRouter and reuse the full Advanced results.
 6. The master model receives those results and every analyst opinion, then writes a calibrated synthesis.
 7. Fixtures, raw evidence, analyses, evaluations, and standings are upserted into SQLite.
 8. `app.py` displays analyst cards, the master answer, post-match review, and cumulative leaderboard.
@@ -56,23 +56,22 @@ and the schema can later gain results, evaluation scores, or users. It still rem
 - Referee name, provider role, and nationality are copied into each normalized fixture and stored as JSON.
 - `research_match(match)` launches three Tavily searches in a thread pool. Search is I/O-bound, so threads
   reduce wall-clock time without complicated async code. Queries include both teams, World Cup 2026, the
-  Central match date, and the specific evidence category; social-media domains are excluded. `basic` depth
-  costs one Tavily credit per search and returns one NLP page summary per URL. Each returned group carries an
+  Central match date, and the specific evidence category; social-media domains are excluded. `advanced` depth
+  costs two Tavily credits per search and returns multiple relevant chunks per URL. Each returned group carries an
   explicit category and query so downstream models can distinguish team, betting, and context evidence.
 - Query strings intentionally use compact entity-and-intent terms rather than conversational questions:
   team names and tournament identify the entity, while terms such as `predicted lineups` or `double chance`
   steer retrieval. Each query remains below Tavily's recommended 400-character limit.
 - `include_answer=False` disables Tavily's separate LLM-generated answer. The response still contains ranked
-  `results`, each with title, URL, relevance score, and `content`; those four bounded fields are retained as
+  `results`, each with title, URL, relevance score, and `content`; those four fields are retained as
   evidence for the analyst panel, master, and audit storage.
 - Betting search names the markets the analysts must compare: 1X2, double chance, draw-no-bet, Asian
   handicap, totals 1.5/2.5/3.5, and both-teams-to-score. These terms steer semantic retrieval rather than
   guarantee that every result contains every market. Betting search excludes social sites but has no domain
   allowlist, because strict filtering often removes all relevant odds pages.
-- Result caps deliberately favor betting evidence: team news uses `4 x 1,200` characters, betting uses
-  `5 x 1,600`, and tactical/venue/weather context uses `3 x 800`. These are worst-case ceilings; short
-  Tavily summaries remain short. Across the three searches the theoretical maximum falls to 15,200
-  content characters, compared with 27,000 under the earlier uniform limits.
+- The app does not pass `max_results` and does not truncate `content`; Tavily's default result count and full
+  Advanced extraction are preserved. When venue is unknown, weather is omitted from the context query to
+  prevent place-name hallucinations such as treating `FIFA` as a geographic location.
 - `analyst_prompt(match, research)` supplies the same evidence and output contract to every model. Requiring
   probabilities totaling 100% makes opinions easier to compare. All analyst output is Simplified Chinese.
 - `run_analysts(models, prompt)` calls up to five models concurrently. Exceptions become visible output for
@@ -85,7 +84,7 @@ and the schema can later gain results, evaluation scores, or users. It still rem
 
 ### `pipeline.py`
 
-- `refresh_and_evaluate_previous(day)` refreshes yesterday plus up to eight stored backlog dates. At Chicago
+- `refresh_and_evaluate_previous(day)` refreshes yesterday plus every stored backlog date. At Chicago
   midnight, a 23:00 kickoff may still be running, so unfinished matches remain queued for a later daily run.
 - `run_for_date(day)` owns the end-to-end sequence. It initializes storage, evaluates eligible past fixtures,
   then discovers fixtures,
@@ -151,7 +150,7 @@ in that case use an artifact, release, or hosted database instead.
 - `tests/test_app_helpers.py` checks UI normalization helpers without calling paid APIs.
 - `tests/test_evaluation.py` mocks OpenRouter and verifies strict ranking plus deterministic 5-to-1 points.
 - `tests/test_football_data.py` verifies Central-day filtering and regulation-time score extraction.
-- `.env.example` documents secrets and cost controls without exposing real values. `.env` is git-ignored.
+- `.env.example` documents secrets and provider/model choices without exposing real values. `.env` is git-ignored.
 - `requirements.txt` uses bounded major versions to reduce surprise breaking changes.
 - `ai_world_cup_walkthrough.ipynb` teaches the implementation as linear cells. It imports no local `.py`
   modules and defines no helper functions; intermediate API payloads, prompts, outputs, and SQL are visible.
@@ -174,16 +173,13 @@ Hugging Face Spaces, Render, or another persistent Python host, or publish a sta
 
 ## 4. Cost, quality, and safety
 
-- Before kickoff, one match produces three Tavily searches, five analyst calls, and one master call. After
-  completion it produces one additional DeepSeek evaluation call.
-- Team news is capped at 4 results / 1,200 characters each, betting at 5 / 1,600, and tactics/weather at
-  3 / 800. These Basic-search caps bound the shared input without another LLM summarizer. Output caps are
-  1,200 per analyst, 1,800 for the master, and 1,800 for the post-match evaluator;
-  `MAX_MATCHES_PER_RUN=8` limits the daily multiplier.
-- Prompts also cap Chinese response length: 180/600 characters for analyst summary/detail and 220/800 for
-  master conclusion/analysis. This encourages graceful shortening before the hard token ceiling is reached.
-- The largest cost lever is `ENABLED_MODEL_IDS`: three analysts instead of five cuts analyst calls by 40%.
-  Keep a diverse panel, for example GPT, Claude, and DeepSeek, rather than three models from one provider.
+- Before kickoff, one match produces three Advanced Tavily searches (six credits), five analyst calls, and
+  one master call. After completion it produces one additional DeepSeek evaluation call.
+- The application currently imposes no custom result-count, content-character, match-count, prompt-character,
+  or generated-token ceilings. Provider defaults and model context windows still apply.
+- The notebook prints each Tavily query, category payload, combined research, analyst prompt, master prompt,
+  and evaluation prompt character count. Use those observations with provider usage dashboards before adding
+  targeted limits.
 - Search results are evidence, not a licensed real-time odds feed. For serious odds comparison, add a
   regulated odds API and record bookmaker, market, timestamp, currency, and jurisdiction.
 - Predictions are not financial advice. Never portray confidence as certainty, never chase losses, and obey

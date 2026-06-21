@@ -14,11 +14,9 @@ from tavily import TavilyClient
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from config import (
-    ANALYST_MAX_TOKENS, BETTING_CONTENT_CHARS, BETTING_MAX_RESULTS, CONTEXT_CONTENT_CHARS,
-    CONTEXT_MAX_RESULTS, EVALUATION_MAX_TOKENS, EVALUATION_MODEL, FOOTBALL_DATA_API_KEY,
+    BETTING_SEARCH_DEPTH, CONTEXT_SEARCH_DEPTH, EVALUATION_MODEL, FOOTBALL_DATA_API_KEY,
     FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL, MATCH_TIMEZONE, OPENROUTER_API_KEY,
-    OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS, TAVILY_API_KEY, TAVILY_SEARCH_DEPTH,
-    TEAM_NEWS_CONTENT_CHARS, TEAM_NEWS_MAX_RESULTS,
+    OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS, TAVILY_API_KEY, TEAM_SEARCH_DEPTH,
 )
 
 
@@ -28,16 +26,16 @@ SOCIAL_DOMAINS = ["instagram.com", "facebook.com", "x.com", "tiktok.com", "youtu
 class RankedAnalyst(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    model_id: str = Field(min_length=1, max_length=100)
+    model_id: str = Field(min_length=1)
     rank: int = Field(ge=1, le=5)
-    reason: str = Field(min_length=1, max_length=320)
+    reason: str = Field(min_length=1)
 
 
 class AnalystEvaluation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ranking: list[RankedAnalyst] = Field(min_length=5, max_length=5)
-    overall_analysis: str = Field(min_length=1, max_length=1000)
+    overall_analysis: str = Field(min_length=1)
 
 
 def _retryable_http_error(error: BaseException) -> bool:
@@ -58,14 +56,11 @@ def openrouter_chat(
     model: str,
     messages: list[dict[str, str]],
     temperature: float = 0.2,
-    max_tokens: int | None = None,
     response_format: dict[str, Any] | None = None,
 ) -> str:
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
     payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
-    if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
     if response_format is not None:
         payload["response_format"] = response_format
     response = httpx.post(
@@ -172,12 +167,16 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
         referee.get("name", "") for referee in match.get("referees", []) if referee.get("name")
     )
     fixture = f"{home} vs {away} FIFA World Cup 2026 {display_date}"
+    context_terms = "tactical preview"
+    if match.get("venue"):
+        context_terms += f" venue {match['venue']} weather"
+    if referee_names:
+        context_terms += f" referee {referee_names}"
     search_specs = [
         {
             "category": "team_news_form_h2h",
             "query": f"{fixture} latest team news injuries suspensions predicted lineups last 5 matches head to head",
-            "max_results": TEAM_NEWS_MAX_RESULTS,
-            "content_chars": TEAM_NEWS_CONTENT_CHARS,
+            "search_depth": TEAM_SEARCH_DEPTH,
         },
         {
             "category": "betting_markets",
@@ -185,22 +184,19 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
                 f"{fixture} latest bookmaker odds 1X2 double chance draw no bet Asian handicap "
                 "totals over under 1.5 2.5 3.5 both teams to score"
             ),
-            "max_results": BETTING_MAX_RESULTS,
-            "content_chars": BETTING_CONTENT_CHARS,
+            "search_depth": BETTING_SEARCH_DEPTH,
         },
         {
             "category": "tactics_venue_weather_referee",
-            "query": f"{fixture} tactical preview venue weather referee {referee_names}".strip(),
-            "max_results": CONTEXT_MAX_RESULTS,
-            "content_chars": CONTEXT_CONTENT_CHARS,
+            "query": f"{fixture} {context_terms}",
+            "search_depth": CONTEXT_SEARCH_DEPTH,
         },
     ]
 
     def search(spec: dict[str, Any]) -> dict[str, Any]:
         search_args: dict[str, Any] = {
             "query": spec["query"],
-            "search_depth": TAVILY_SEARCH_DEPTH,
-            "max_results": spec["max_results"],
+            "search_depth": spec["search_depth"],
             "include_answer": False,
             "exclude_domains": SOCIAL_DOMAINS,
         }
@@ -216,7 +212,7 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
                     "title": result.get("title"),
                     "url": result.get("url"),
                     "score": result.get("score"),
-                    "content": (result.get("content") or "")[:spec["content_chars"]],
+                    "content": result.get("content") or "",
                 }
                 for result in raw_results
             ]
@@ -233,12 +229,12 @@ Analyze {match['home_team']} vs {match['away_team']} in {match['competition']} o
 Fixture details: group={match.get('group_name') or 'unknown'}, kickoff={match.get('kickoff') or 'unknown'},
 venue={match.get('venue') or 'unknown'}, referees={json.dumps(match.get('referees', []), ensure_ascii=False)}.
 
-Use the supplied bounded Tavily results as current evidence, but also add your own independent football analysis,
+Use the supplied Tavily results as current evidence, but also add your own independent football analysis,
 tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
 Never invent current injuries, lineups, or odds. Flag stale/conflicting information and account for bookmaker margin.
 Treat every result and predicted score as regulation time only, excluding extra time and penalties.
 
-Return concise Markdown in exactly this order:
+Return Markdown in exactly this order:
 ## 快速结论
 - 赛果：主胜 / 平局 / 客胜
 - 预测比分：
@@ -252,7 +248,6 @@ Return concise Markdown in exactly this order:
 ### 独立分析
 ### 主要风险
 When evidence is weak, recommend “不下注”. Put the short actionable answer before all rationale.
-快速结论不超过 180 个中文字符；详细分析不超过 600 个中文字符。
 Write the entire response in Simplified Chinese, including all headings and explanations.
 
 Research results:
@@ -268,7 +263,6 @@ def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
                 model["model"],
                 [{"role": "user", "content": prompt}],
                 0.2,
-                ANALYST_MAX_TOKENS,
             ): model
             for model in models
         }
@@ -300,7 +294,6 @@ Return Markdown in exactly this order:
 Explain model agreement/disagreement, the strongest Tavily evidence, your own independent synthesis,
 and invalidation risks. End with a short responsible-gambling notice. Betting is entertainment, not income.
 If there is no defensible edge, explicitly recommend “不下注”. Put the final actionable answer first.
-最终结论不超过 220 个中文字符；综合分析不超过 800 个中文字符。
 Write the entire final recommendation in Simplified Chinese.
 
 Match: {json.dumps(match, default=str)}
@@ -338,7 +331,6 @@ Analyst reports: {json.dumps(outputs, ensure_ascii=False)}"""
         EVALUATION_MODEL,
         [{"role": "user", "content": prompt}],
         temperature=0,
-        max_tokens=EVALUATION_MAX_TOKENS,
         response_format={"type": "json_object"},
     ).strip()
     if response.startswith("```"):

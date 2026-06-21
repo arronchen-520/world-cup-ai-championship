@@ -32,19 +32,19 @@ uses `load_dotenv()` and linear executable cells rather than hiding the workflow
 
 football-data.org is the only fixture source. One request returns stable match IDs, teams, UTC kickoff,
 venue, stage, and group; the documented JSON fields are normalized directly. Tavily is used only for
-match research. Analyst and master outputs are Simplified Chinese. `MAX_MATCHES_PER_RUN=8` limits paid runs.
+match research. Analyst and master outputs are Simplified Chinese.
 Every daily run also refreshes yesterday plus any older unevaluated match days. Only `FINISHED` fixtures with
 five stored analyst outputs are judged; late matches remain queued for a later run.
 
-Tavily uses `basic` depth: team news returns 4 results capped at 1,200 characters each, betting returns 5 at
-1,600, and tactical context returns 3 at 800. Generated Tavily answers are disabled; models receive retrieved
-page summaries directly. Betting search is not restricted to an allowlist; `max_results=5` is a ceiling, so
-Tavily may return fewer when it finds fewer relevant pages. Raw bounded snippets remain stored for audit.
-Analyst/master/evaluation output caps are 1,200/1,800/1,800 tokens. See `.env.example` for overrides.
+Team news, betting, and tactical context all use Tavily `advanced` depth. The app does not set `max_results`,
+truncate returned `content`, cap matches per run, or send an OpenRouter `max_tokens` value. Tavily therefore
+uses its service default result count, and models receive the full extracted search content. Generated Tavily
+answers and betting-domain allowlists remain disabled. The notebook prints every query/research/prompt character
+count so limits can later be chosen from observed runs rather than guessed in advance.
 
 Model slugs change over time and availability varies by OpenRouter account. A failed analyst is
 recorded as unavailable while the other analysts continue. Verify the `MODELS` entries against your
 OpenRouter model catalog before the first paid run.
 
 See [WALKTHROUGH.md](WALKTHROUGH.md) for the architecture, every file and function, GitHub setup,
-cost controls, limitations, and responsible-use notes.
+cost observations, limitations, and responsible-use notes.

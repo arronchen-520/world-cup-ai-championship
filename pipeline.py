@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from config import EVALUATION_MODEL, MASTER_MAX_TOKENS, MASTER_MODEL, MAX_MATCHES_PER_RUN, MODELS
+from config import EVALUATION_MODEL, MASTER_MODEL, MODELS
 from database import (
     get_day, get_pending_evaluation_dates, initialize_database,
     save_analysis, save_evaluation, save_match,
@@ -53,7 +53,6 @@ def run_for_date(day: date) -> list[dict]:
     evaluated = refresh_and_evaluate_previous(day)
     print(f"Added {evaluated} completed-match evaluation(s).")
     fixtures = get_fixtures_football_data(day)
-    fixtures = fixtures[:MAX_MATCHES_PER_RUN]
     results = []
     for match in fixtures:
         save_match(match)
@@ -63,7 +62,6 @@ def run_for_date(day: date) -> list[dict]:
             MASTER_MODEL,
             [{"role": "user", "content": master_prompt(match, raw_research, outputs)}],
             temperature=0.1,
-            max_tokens=MASTER_MAX_TOKENS,
         )
         save_analysis(match["match_key"], {"raw": raw_research}, outputs, final)
         results.append({"match": match, "model_outputs": outputs, "final_output": final})

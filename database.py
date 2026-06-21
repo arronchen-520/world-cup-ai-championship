@@ -181,7 +181,7 @@ def save_evaluation(
         )
 
 
-def get_pending_evaluation_dates(before_day: str, limit: int = 8, path: Path = DATABASE_PATH) -> list[str]:
+def get_pending_evaluation_dates(before_day: str, path: Path = DATABASE_PATH) -> list[str]:
     """Return recent analyzed match dates that still have at least one unevaluated match."""
     with connect(path) as db:
         rows = db.execute(
@@ -190,8 +190,8 @@ def get_pending_evaluation_dates(before_day: str, limit: int = 8, path: Path = D
                JOIN analyses a USING (match_key)
                LEFT JOIN match_evaluations e USING (match_key)
                WHERE m.match_date < ? AND e.match_key IS NULL
-               ORDER BY m.match_date DESC LIMIT ?""",
-            (before_day, limit),
+               ORDER BY m.match_date DESC""",
+            (before_day,),
         ).fetchall()
     return [row[0] for row in rows]
 

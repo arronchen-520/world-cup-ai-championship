@@ -2,7 +2,7 @@ import services
 from services import analyst_prompt, openrouter_chat
 
 
-def test_openrouter_max_tokens_is_sent(monkeypatch):
+def test_openrouter_does_not_set_an_output_limit(monkeypatch):
     captured = {}
 
     class Response:
@@ -18,8 +18,8 @@ def test_openrouter_max_tokens_is_sent(monkeypatch):
 
     monkeypatch.setattr(services, "OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(services.httpx, "post", fake_post)
-    assert openrouter_chat("test/model", [{"role": "user", "content": "test"}], max_tokens=321) == "ok"
-    assert captured["json"]["max_tokens"] == 321
+    assert openrouter_chat("test/model", [{"role": "user", "content": "test"}]) == "ok"
+    assert "max_tokens" not in captured["json"]
 
 
 def test_analyst_prompt_is_concise_first_and_independent():
@@ -30,4 +30,4 @@ def test_analyst_prompt_is_concise_first_and_independent():
     prompt = analyst_prompt(match, {"searches": []})
     assert prompt.index("## 快速结论") < prompt.index("## 详细分析")
     assert "independent football analysis" in prompt
-    assert "不超过 600 个中文字符" in prompt
+    assert "不超过" not in prompt
