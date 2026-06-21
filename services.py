@@ -16,8 +16,9 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from config import (
     ANALYST_MAX_TOKENS, BETTING_CONTENT_CHARS, BETTING_MAX_RESULTS, CONTEXT_CONTENT_CHARS,
-    CONTEXT_MAX_RESULTS, FOOTBALL_DATA_API_KEY, FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL,
-    MATCH_TIMEZONE, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
+    CONTEXT_MAX_RESULTS, EVALUATION_MAX_TOKENS, EVALUATION_MODEL, FOOTBALL_DATA_API_KEY,
+    FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL, MATCH_TIMEZONE, OPENROUTER_API_KEY,
+    OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
     RESEARCH_SUMMARY_MAX_TOKENS, RESEARCH_SUMMARY_MODEL, TAVILY_API_KEY, TAVILY_SEARCH_DEPTH,
     TEAM_NEWS_CONTENT_CHARS, TEAM_NEWS_MAX_RESULTS,
 )
@@ -71,6 +72,21 @@ class ResearchDigest(BaseModel):
     betting_markets: list[BettingPoint] = Field(default_factory=list, max_length=6)
     tactics_venue_weather: list[EvidencePoint] = Field(default_factory=list, max_length=3)
     conflicts_and_gaps: list[DigestGap] = Field(default_factory=list, max_length=4)
+
+
+class RankedAnalyst(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_id: str = Field(min_length=1, max_length=100)
+    rank: int = Field(ge=1, le=5)
+    reason: str = Field(min_length=1, max_length=320)
+
+
+class AnalystEvaluation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ranking: list[RankedAnalyst] = Field(min_length=5, max_length=5)
+    overall_analysis: str = Field(min_length=1, max_length=1000)
 
 
 def _retryable_http_error(error: BaseException) -> bool:
@@ -137,6 +153,7 @@ def get_fixtures_football_data(day: date) -> list[dict[str, Any]]:
         if not utc_start <= kickoff < utc_end:
             continue
         group_name = match.get("group") or match.get("stage") or ""
+        actual_result = extract_actual_result(match)
         fixtures.append({
             "match_key": f"football-data:{match['id']}",
             "match_date": day.isoformat(),
@@ -147,6 +164,8 @@ def get_fixtures_football_data(day: date) -> list[dict[str, Any]]:
             "home_team": match["homeTeam"]["name"],
             "away_team": match["awayTeam"]["name"],
             "venue": match.get("venue"),
+            "status": match.get("status"),
+            "actual_result": actual_result,
             "referees": [
                 {
                     "name": referee.get("name"),
@@ -159,6 +178,37 @@ def get_fixtures_football_data(day: date) -> list[dict[str, Any]]:
             "raw": match,
         })
     return fixtures
+
+
+def extract_actual_result(raw_match: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a regulation-time result only when football-data marks the match finished."""
+    if raw_match.get("status") != "FINISHED":
+        return None
+    score = raw_match.get("score") or {}
+    regular = score.get("regularTime") or {}
+    full_time = score.get("fullTime") or {}
+    home = regular.get("home")
+    away = regular.get("away")
+    if home is None or away is None:
+        home, away = full_time.get("home"), full_time.get("away")
+    if home is None or away is None:
+        return None
+    if home > away:
+        outcome = "HOME_WIN"
+    elif home < away:
+        outcome = "AWAY_WIN"
+    else:
+        outcome = "DRAW"
+    return {
+        "regulation_home": home,
+        "regulation_away": away,
+        "regulation_outcome": outcome,
+        "duration": score.get("duration"),
+        "final_winner": score.get("winner"),
+        "full_time": full_time,
+        "extra_time": score.get("extraTime"),
+        "penalties": score.get("penalties"),
+    }
 
 
 def research_match(match: dict[str, Any]) -> dict[str, Any]:
@@ -269,6 +319,7 @@ venue={match.get('venue') or 'unknown'}, referees={json.dumps(match.get('referee
 Use the supplied evidence digest as current evidence, but also add your own independent football analysis,
 tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
 Never invent current injuries, lineups, or odds. Flag stale/conflicting information and account for bookmaker margin.
+Treat every result and predicted score as regulation time only, excluding extra time and penalties.
 
 Return concise Markdown in exactly this order:
 ## 快速结论
@@ -317,6 +368,7 @@ def master_prompt(match: dict[str, Any], research_digest: dict[str, Any], output
     return f"""Act as the chair of a football prediction panel. Synthesize the independent reports below.
 Do not decide by majority vote alone: weigh source quality, reasoning, market prices, injuries, and disagreement.
 Never invent facts or odds. If there is no defensible edge, explicitly recommend No bet.
+Treat every result and predicted score as regulation time only, excluding extra time and penalties.
 
 Return Markdown in exactly this order:
 ## 最终结论
@@ -337,3 +389,50 @@ Write the entire final recommendation in Simplified Chinese.
 Match: {json.dumps(match, default=str)}
 Research digest: {json.dumps(research_digest, ensure_ascii=False)}
 Panel reports: {json.dumps(outputs, ensure_ascii=False)}"""
+
+
+def evaluate_analysts(
+    match: dict[str, Any],
+    actual_result: dict[str, Any],
+    outputs: dict[str, str],
+) -> dict[str, Any]:
+    """Rank exactly five analyst reports against the finished regulation-time result."""
+    if len(outputs) != 5:
+        raise ValueError(f"Expected exactly five analyst outputs, received {len(outputs)}")
+    schema = AnalystEvaluation.model_json_schema()
+    prompt = f"""You are the post-match judge for an AI football prediction championship.
+Evaluate exactly five analyst reports against the actual regulation-time result. Do not evaluate or mention
+the master recommendation. Rank all five analysts strictly from 1 (best) to 5 (worst), with no ties.
+
+Weight the judgment as follows:
+- 45%: correct regulation-time outcome and closeness of predicted score
+- 25%: probability calibration, especially probability assigned to the actual outcome
+- 20%: whether conservative/aggressive bets would have settled successfully from the known score
+- 10%: reasoning quality, uncertainty handling, and avoidance of unsupported claims
+
+Do not reward verbosity. Do not assume a bet won when its line or settlement cannot be determined.
+Return one JSON object matching the schema. Write reasons and overall analysis in Simplified Chinese.
+
+Match: {match['home_team']} vs {match['away_team']}
+Actual result: {json.dumps(actual_result, ensure_ascii=False)}
+JSON schema: {json.dumps(schema, ensure_ascii=False)}
+Analyst reports: {json.dumps(outputs, ensure_ascii=False)}"""
+    response = openrouter_chat(
+        EVALUATION_MODEL,
+        [{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=EVALUATION_MAX_TOKENS,
+        response_format={"type": "json_object"},
+    ).strip()
+    if response.startswith("```"):
+        response = response.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    evaluation = AnalystEvaluation.model_validate_json(response)
+    expected_models = set(outputs)
+    ranked_models = {item.model_id for item in evaluation.ranking}
+    ranks = {item.rank for item in evaluation.ranking}
+    if ranked_models != expected_models or ranks != {1, 2, 3, 4, 5}:
+        raise ValueError("Evaluation must rank each supplied model exactly once from 1 through 5")
+    result = evaluation.model_dump(mode="json")
+    for item in result["ranking"]:
+        item["points"] = 6 - item["rank"]
+    return result

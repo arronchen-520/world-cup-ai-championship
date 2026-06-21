@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import gradio as gr
 
 from config import MATCH_TIMEZONE, MODELS
-from database import get_day, initialize_database
+from database import get_day, get_leaderboard, initialize_database
 from pipeline import run_for_date
 
 
@@ -36,6 +36,43 @@ def _split_output(text: str | None, detail_heading: str) -> tuple[str, str]:
     return summary.strip(), detail.strip()
 
 
+def _evaluation_markdown(evaluation: dict | None) -> str:
+    if not evaluation:
+        return ""
+    result = evaluation["actual_result"]
+    outcome_labels = {"HOME_WIN": "主胜", "DRAW": "平局", "AWAY_WIN": "客胜"}
+    lines = [
+        f"**常规时间赛果：** {result['regulation_home']}–{result['regulation_away']} "
+        f"({outcome_labels.get(result['regulation_outcome'], result['regulation_outcome'])})",
+        "",
+        "| 排名 | 模型 | 得分 | 赛后评价 |",
+        "|---:|---|---:|---|",
+    ]
+    for item in sorted(evaluation["ranking"], key=lambda row: row["rank"]):
+        reason = item["reason"].replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {item['rank']} | {item['model_id']} | {item['points']} | {reason} |")
+    lines.extend(["", "**DeepSeek 综合复盘**", "", evaluation["overall_analysis"]])
+    return "\n".join(lines)
+
+
+def _leaderboard_markdown() -> str:
+    standings = get_leaderboard()
+    lines = [
+        "## AI Championship 累计排行榜",
+        "",
+        "| 排名 | 模型 | 平均分 | 总分 | 已评分比赛 |",
+        "|---:|---|---:|---:|---:|",
+    ]
+    if not standings:
+        lines.append("| – | 暂无已完成评分 | – | – | – |")
+    for rank, item in enumerate(standings, start=1):
+        lines.append(
+            f"| {rank} | {item['model_id']} | {item['average_score']:.2f} | "
+            f"{item['total_points']} | {item['evaluated_matches']} |"
+        )
+    return "\n".join(lines)
+
+
 def load_date(value: str | datetime | None):
     day = _date_string(value)
     if date.fromisoformat(day) > datetime.now(ZoneInfo(MATCH_TIMEZONE)).date():
@@ -44,13 +81,13 @@ def load_date(value: str | datetime | None):
     choices = _choices(rows)
     selected = choices[0][1] if choices else None
     status = f"Found {len(rows)} saved match(es) for {day}."
-    return gr.update(choices=choices, value=selected), status, rows
+    return gr.update(choices=choices, value=selected), status, rows, _leaderboard_markdown()
 
 
 def show_match(match_key: str | None, rows: list[dict] | None):
     row = next((item for item in (rows or []) if item["match_key"] == match_key), None)
     if not row:
-        return ["_暂无已保存分析。_"] * (len(MODELS) * 2 + 3)
+        return ["_暂无已保存分析。_", *([""] * (len(MODELS) * 2 + 3))]
     location = row.get("venue") or "TBD"
     group = f" | {row['group_name']}" if row.get("group_name") else ""
     referees = ", ".join(
@@ -70,7 +107,7 @@ def show_match(match_key: str | None, rows: list[dict] | None):
         opinions.extend([summary, detail])
     final = row.get("final_output") or "_Analysis has not been generated yet._"
     final_summary, final_detail = _split_output(final, "## 综合分析")
-    return [header, *opinions, final_summary, final_detail]
+    return [header, *opinions, final_summary, final_detail, _evaluation_markdown(row.get("evaluation"))]
 
 
 def analyze_date(value: str | datetime | None):
@@ -82,8 +119,13 @@ def analyze_date(value: str | datetime | None):
         results = run_for_date(day)
     except Exception as error:
         raise gr.Error(f"Analysis failed: {type(error).__name__}: {error}") from error
-    dropdown, _, rows = load_date(day_text)
-    return dropdown, f"Analysis complete: {len(results)} match(es) for {day_text}.", rows
+    dropdown, _, rows, leaderboard = load_date(day_text)
+    return (
+        dropdown,
+        f"Analysis complete: {len(results)} match(es) for {day_text}.",
+        rows,
+        leaderboard,
+    )
 
 
 def build_app() -> gr.Blocks:
@@ -97,6 +139,10 @@ def build_app() -> gr.Blocks:
     .model-summary {min-height:210px}
     .final-card {border:2px solid #088395; border-radius:14px; padding:16px;
                  background:linear-gradient(135deg,#f0ffff,#ffffff)}
+    .review-card {border:1px solid #8e9aaf; border-radius:14px; padding:16px;
+                  background:#f8f9fa}
+    .leaderboard-card {border:2px solid #f4b942; border-radius:14px; padding:16px;
+                       background:linear-gradient(135deg,#fff8dd,#ffffff)}
     """
     with gr.Blocks(title="AI World Cup Championship", css=css) as demo:
         rows_state = gr.State([])
@@ -124,16 +170,21 @@ def build_app() -> gr.Blocks:
             final_summary_box = gr.Markdown()
             with gr.Accordion("展开综合分析", open=False):
                 final_detail_box = gr.Markdown()
+        with gr.Column(elem_classes="review-card"):
+            gr.Markdown("## 赛后 AI 复盘")
+            evaluation_box = gr.Markdown()
+        leaderboard_box = gr.Markdown(_leaderboard_markdown(), elem_classes="leaderboard-card")
 
-        outputs = [match_header, *model_boxes, final_summary_box, final_detail_box]
-        load_button.click(load_date, day_input, [match_select, status, rows_state]).then(
+        outputs = [match_header, *model_boxes, final_summary_box, final_detail_box, evaluation_box]
+        date_outputs = [match_select, status, rows_state, leaderboard_box]
+        load_button.click(load_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs
         )
-        analyze_button.click(analyze_date, day_input, [match_select, status, rows_state]).then(
+        analyze_button.click(analyze_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs
         )
         match_select.change(show_match, [match_select, rows_state], outputs)
-        demo.load(load_date, day_input, [match_select, status, rows_state]).then(
+        demo.load(load_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs
         )
     return demo

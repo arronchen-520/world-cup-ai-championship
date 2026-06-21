@@ -1,7 +1,7 @@
 from datetime import date
 
 import services
-from services import get_fixtures_football_data
+from services import extract_actual_result, get_fixtures_football_data
 
 
 PAYLOAD = {
@@ -17,6 +17,23 @@ PAYLOAD = {
         "referees": [{"name": "Jane Referee", "type": "REFEREE", "nationality": "Canada"}],
     }]
 }
+
+
+def test_extracts_regulation_result_before_extra_time():
+    result = extract_actual_result({
+        "status": "FINISHED",
+        "score": {
+            "duration": "EXTRA_TIME",
+            "winner": "HOME_TEAM",
+            "regularTime": {"home": 1, "away": 1},
+            "fullTime": {"home": 2, "away": 1},
+            "extraTime": {"home": 1, "away": 0},
+            "penalties": {"home": None, "away": None},
+        },
+    })
+    assert result["regulation_outcome"] == "DRAW"
+    assert (result["regulation_home"], result["regulation_away"]) == (1, 1)
+    assert extract_actual_result({"status": "TIMED", "score": {}}) is None
 
 
 def test_fixture_request_and_normalization(monkeypatch):

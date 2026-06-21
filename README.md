@@ -2,6 +2,8 @@
 
 A Gradio dashboard that discovers football fixtures, researches each matchup with Tavily,
 collects independent opinions through OpenRouter, and asks a master model for a final synthesis.
+After matches finish, DeepSeek ranks the five analyst predictions against the regulation-time result and
+the dashboard tracks cumulative 5-to-1 scores and average points. The master answer is never scored.
 
 ## Quick start
 
@@ -31,12 +33,15 @@ uses `load_dotenv()` and linear executable cells rather than hiding the workflow
 football-data.org is the only fixture source. One request returns stable match IDs, teams, UTC kickoff,
 venue, stage, and group; the documented JSON fields are normalized directly. Tavily is used only for
 match research. Analyst and master outputs are Simplified Chinese. `MAX_MATCHES_PER_RUN=8` limits paid runs.
+Every daily run also refreshes yesterday plus any older unevaluated match days. Only `FINISHED` fixtures with
+five stored analyst outputs are judged; late matches remain queued for a later run.
 
 Tavily uses `basic` depth: team news returns 4 results capped at 1,200 characters each, betting returns 5 at
 1,600, and tactical context returns 3 at 800. Generated Tavily answers are disabled; models receive retrieved
 page summaries. Betting results also use a curated source-domain filter. One DeepSeek call compresses those
 snippets into a Pydantic-validated digest reused by the analyst panel and master; raw snippets remain stored
-for audit. Summary/analyst/master output caps are 1,100/1,200/1,800 tokens. See `.env.example` for overrides.
+for audit. Summary/analyst/master/evaluation output caps are 1,100/1,200/1,800/1,800 tokens. See
+`.env.example` for overrides.
 
 Model slugs change over time and availability varies by OpenRouter account. A failed analyst is
 recorded as unavailable while the other analysts continue. Verify the `MODELS` entries against your
