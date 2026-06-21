@@ -30,4 +30,4 @@ def test_analyst_prompt_is_concise_first_and_independent():
     prompt = analyst_prompt(match, {"searches": []})
     assert prompt.index("## 快速结论") < prompt.index("## 详细分析")
     assert "independent football analysis" in prompt
-    assert "不超过" not in prompt
+    assert "不超过 600 个中文字符" in prompt

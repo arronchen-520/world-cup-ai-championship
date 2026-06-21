@@ -36,11 +36,11 @@ match research. Analyst and master outputs are Simplified Chinese.
 Every daily run also refreshes yesterday plus any older unevaluated match days. Only `FINISHED` fixtures with
 five stored analyst outputs are judged; late matches remain queued for a later run.
 
-Team news, betting, and tactical context all use Tavily `advanced` depth. The app does not set `max_results`,
-truncate returned `content`, cap matches per run, or send an OpenRouter `max_tokens` value. Tavily therefore
-uses its service default result count, and models receive the full extracted search content. Generated Tavily
-answers and betting-domain allowlists remain disabled. The notebook prints every query/research/prompt character
-count so limits can later be chosen from observed runs rather than guessed in advance.
+Team news, betting, and tactical context share Tavily `advanced` depth and `max_results=5`. Five is also
+Tavily's current default and matched the useful-source ceiling in local A/B tests. The app does not truncate
+returned `content`, cap matches per run, or send an OpenRouter `max_tokens` value. Generated Tavily answers
+and betting-domain allowlists remain disabled. Prompts request readable Chinese output lengths, while the
+notebook prints every query/research/prompt character count for later tuning.
 
 Model slugs change over time and availability varies by OpenRouter account. A failed analyst is
 recorded as unavailable while the other analysts continue. Verify the `MODELS` entries against your

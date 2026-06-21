@@ -69,8 +69,9 @@ and the schema can later gain results, evaluation scores, or users. It still rem
   handicap, totals 1.5/2.5/3.5, and both-teams-to-score. These terms steer semantic retrieval rather than
   guarantee that every result contains every market. Betting search excludes social sites but has no domain
   allowlist, because strict filtering often removes all relevant odds pages.
-- The app does not pass `max_results` and does not truncate `content`; Tavily's default result count and full
-  Advanced extraction are preserved. When venue is unknown, weather is omitted from the context query to
+- All three categories share `TAVILY_SEARCH_DEPTH=advanced` and `TAVILY_MAX_RESULTS=5`; five is Tavily's
+  current default and produced five still-useful Advanced sources in local tests. The app does not truncate
+  `content`. When venue is unknown, weather is omitted from the context query to
   prevent place-name hallucinations such as treating `FIFA` as a geographic location.
 - `analyst_prompt(match, research)` supplies the same evidence and output contract to every model. Requiring
   probabilities totaling 100% makes opinions easier to compare. All analyst output is Simplified Chinese.
@@ -175,8 +176,11 @@ Hugging Face Spaces, Render, or another persistent Python host, or publish a sta
 
 - Before kickoff, one match produces three Advanced Tavily searches (six credits), five analyst calls, and
   one master call. After completion it produces one additional DeepSeek evaluation call.
-- The application currently imposes no custom result-count, content-character, match-count, prompt-character,
-  or generated-token ceilings. Provider defaults and model context windows still apply.
+- Search result count is explicitly five. The application imposes no content-character, match-count, or API
+  generated-token ceilings. Provider and model context-window limits still apply.
+- Prompts ask analysts for 180/600 Chinese characters in conclusion/detail, the master for 220/800, and the
+  evaluator for 180 characters per reason plus 800 overall. These are readability instructions, not API
+  `max_tokens` truncation points.
 - The notebook prints each Tavily query, category payload, combined research, analyst prompt, master prompt,
   and evaluation prompt character count. Use those observations with provider usage dashboards before adding
   targeted limits.

@@ -14,9 +14,9 @@ from tavily import TavilyClient
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from config import (
-    BETTING_SEARCH_DEPTH, CONTEXT_SEARCH_DEPTH, EVALUATION_MODEL, FOOTBALL_DATA_API_KEY,
-    FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL, MATCH_TIMEZONE, OPENROUTER_API_KEY,
-    OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS, TAVILY_API_KEY, TEAM_SEARCH_DEPTH,
+    EVALUATION_MODEL, FOOTBALL_DATA_API_KEY, FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL,
+    MATCH_TIMEZONE, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
+    TAVILY_API_KEY, TAVILY_MAX_RESULTS, TAVILY_SEARCH_DEPTH,
 )
 
 
@@ -176,7 +176,6 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
         {
             "category": "team_news_form_h2h",
             "query": f"{fixture} latest team news injuries suspensions predicted lineups last 5 matches head to head",
-            "search_depth": TEAM_SEARCH_DEPTH,
         },
         {
             "category": "betting_markets",
@@ -184,19 +183,18 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
                 f"{fixture} latest bookmaker odds 1X2 double chance draw no bet Asian handicap "
                 "totals over under 1.5 2.5 3.5 both teams to score"
             ),
-            "search_depth": BETTING_SEARCH_DEPTH,
         },
         {
             "category": "tactics_venue_weather_referee",
             "query": f"{fixture} {context_terms}",
-            "search_depth": CONTEXT_SEARCH_DEPTH,
         },
     ]
 
     def search(spec: dict[str, Any]) -> dict[str, Any]:
         search_args: dict[str, Any] = {
             "query": spec["query"],
-            "search_depth": spec["search_depth"],
+            "search_depth": TAVILY_SEARCH_DEPTH,
+            "max_results": TAVILY_MAX_RESULTS,
             "include_answer": False,
             "exclude_domains": SOCIAL_DOMAINS,
         }
@@ -248,6 +246,7 @@ Return Markdown in exactly this order:
 ### 独立分析
 ### 主要风险
 When evidence is weak, recommend “不下注”. Put the short actionable answer before all rationale.
+快速结论不超过 180 个中文字符；详细分析不超过 600 个中文字符。
 Write the entire response in Simplified Chinese, including all headings and explanations.
 
 Research results:
@@ -294,6 +293,7 @@ Return Markdown in exactly this order:
 Explain model agreement/disagreement, the strongest Tavily evidence, your own independent synthesis,
 and invalidation risks. End with a short responsible-gambling notice. Betting is entertainment, not income.
 If there is no defensible edge, explicitly recommend “不下注”. Put the final actionable answer first.
+最终结论不超过 220 个中文字符；综合分析不超过 800 个中文字符。
 Write the entire final recommendation in Simplified Chinese.
 
 Match: {json.dumps(match, default=str)}
@@ -322,6 +322,7 @@ Weight the judgment as follows:
 
 Do not reward verbosity. Do not assume a bet won when its line or settlement cannot be determined.
 Return one JSON object matching the schema. Write reasons and overall analysis in Simplified Chinese.
+每个模型的评价理由不超过 180 个中文字符；综合复盘不超过 800 个中文字符。
 
 Match: {match['home_team']} vs {match['away_team']}
 Actual result: {json.dumps(actual_result, ensure_ascii=False)}
