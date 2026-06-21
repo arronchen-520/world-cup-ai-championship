@@ -1,0 +1,8 @@
+gradio>=5.0,<7
+httpx>=0.27,<1
+openai>=1.0,<3
+tavily-python>=0.5,<1
+python-dotenv>=1.0,<2
+tenacity>=9.0,<10
+pytest>=8.0,<10
+nbformat>=5.10,<6
