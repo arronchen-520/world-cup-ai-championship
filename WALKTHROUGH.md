@@ -26,6 +26,13 @@ All settings live here. `load_dotenv()` reads a local `.env`; GitHub Actions sup
 environment variables. `MODELS` is the analyst roster. `MASTER_MODEL` defaults to GPT 5.5 but can be
 overridden without editing code. Paths are anchored to the repository so commands work from any folder.
 
+### `logging_config.py`
+
+- `JsonFormatter.format(record)` converts standard records and structured `extra` fields into one JSON object
+  without recording full prompts, research text, or credentials.
+- `configure_logging()` installs one idempotent stdout handler using `LOG_LEVEL`. The CLI and Gradio share the
+  same searchable event format locally and in GitHub Actions.
+
 ### `database.py`
 
 - `connect(path)` is a context manager. It creates the parent directory, returns rows addressable by
@@ -132,8 +139,8 @@ the UTC date is not reliable. UTC and Central kickoff strings are both retained 
 - `analyze_date(value)` validates the date, runs the pipeline, reloads storage, and converts failures into a
   visible Gradio error.
 - `build_app()` constructs the themed Blocks interface and wires load, run, selection-change, and startup
-  events. Five analyst cards are produced from `MODELS`, followed by a permanent post-match review card and
-  the global leaderboard.
+  events. The Master card appears first; five analyst cards from `MODELS` share one responsive row, followed
+  by the permanent post-match review card and global leaderboard.
 
 ### `.github/workflows/daily-analysis.yml`
 
@@ -151,6 +158,7 @@ in that case use an artifact, release, or hosted database instead.
 - `tests/test_app_helpers.py` checks UI normalization helpers without calling paid APIs.
 - `tests/test_evaluation.py` mocks OpenRouter and verifies strict ranking plus deterministic 5-to-1 points.
 - `tests/test_football_data.py` verifies Central-day filtering and regulation-time score extraction.
+- `tests/test_logging.py` verifies JSON events and structured fields without external services.
 - `.env.example` documents secrets and provider/model choices without exposing real values. `.env` is git-ignored.
 - `requirements.txt` uses bounded major versions to reduce surprise breaking changes.
 - `ai_world_cup_walkthrough.ipynb` teaches the implementation as linear cells. It imports no local `.py`

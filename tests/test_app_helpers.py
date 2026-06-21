@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app import _choices, _date_string, _evaluation_markdown, _split_output
+from app import _choices, _date_string, _evaluation_markdown, _split_output, show_match
 
 
 def test_date_string():
@@ -33,3 +33,20 @@ def test_evaluation_markdown_is_empty_until_result_exists():
     assert "2–1" in text
     assert "model-a" in text
     assert "综合复盘" in text
+
+
+def test_show_match_returns_master_before_analysts():
+    row = {
+        "match_key": "match-1", "home_team": "A", "away_team": "B",
+        "competition": "World Cup", "group_name": None, "kickoff": None,
+        "kickoff_local": None, "venue": None, "source": "test", "referees": [],
+        "model_outputs": {
+            "gpt-5.5": "## 快速结论\nanalyst\n## 详细分析\ndetail",
+        },
+        "final_output": "## 最终结论\nmaster\n## 综合分析\nmaster detail",
+        "evaluation": None,
+    }
+    outputs = show_match("match-1", [row])
+    assert "master" in outputs[1]
+    assert outputs[2] == "master detail"
+    assert "analyst" in outputs[3]

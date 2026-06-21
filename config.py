@@ -12,6 +12,7 @@ load_dotenv()
 ROOT = Path(__file__).resolve().parent
 MATCH_TIMEZONE = os.getenv("MATCH_TIMEZONE", "America/Chicago")
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", ROOT / "data" / "championship.db"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "")

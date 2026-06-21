@@ -20,6 +20,9 @@ python app.py
 Open the local URL printed by Gradio. Use **Run / refresh analysis** to populate a date,
 or **Load saved** to browse existing SQLite history.
 
+Each match page shows the Master recommendation first, followed by all five analyst cards in one responsive
+row, then the post-match review and cumulative leaderboard.
+
 For the cell-by-cell version, open `ai_world_cup_walkthrough.ipynb`. It imports only installed
 packages and the Python standard library; it never imports the project's `.py` files. The notebook
 uses `load_dotenv()` and linear executable cells rather than hiding the workflow inside helper functions.
@@ -41,6 +44,10 @@ Tavily's current default and matched the useful-source ceiling in local A/B test
 returned `content`, cap matches per run, or send an OpenRouter `max_tokens` value. Generated Tavily answers
 and betting-domain allowlists remain disabled. Prompts request readable Chinese output lengths, while the
 notebook prints every query/research/prompt character count for later tuning.
+
+Production commands emit JSON Lines logs to stdout. Events cover fixture retrieval, each Tavily category,
+OpenRouter calls, analyst panels, post-match evaluation, pipeline stages, and Gradio analysis requests.
+Set `LOG_LEVEL` in `.env`; GitHub Actions captures stdout automatically.
 
 Model slugs change over time and availability varies by OpenRouter account. A failed analyst is
 recorded as unavailable while the other analysts continue. Verify the `MODELS` entries against your

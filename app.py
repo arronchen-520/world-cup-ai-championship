@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -9,7 +10,11 @@ import gradio as gr
 
 from config import MATCH_TIMEZONE, MODELS
 from database import get_day, get_leaderboard, initialize_database
+from logging_config import configure_logging
 from pipeline import run_for_date
+
+
+logger = logging.getLogger(__name__)
 
 
 def _date_string(value: str | datetime | None) -> str:
@@ -81,6 +86,7 @@ def load_date(value: str | datetime | None):
     choices = _choices(rows)
     selected = choices[0][1] if choices else None
     status = f"Found {len(rows)} saved match(es) for {day}."
+    logger.info("gradio.date.loaded", extra={"match_date": day, "saved_matches": len(rows)})
     return gr.update(choices=choices, value=selected), status, rows, _leaderboard_markdown()
 
 
@@ -107,7 +113,8 @@ def show_match(match_key: str | None, rows: list[dict] | None):
         opinions.extend([summary, detail])
     final = row.get("final_output") or "_Analysis has not been generated yet._"
     final_summary, final_detail = _split_output(final, "## 综合分析")
-    return [header, *opinions, final_summary, final_detail, _evaluation_markdown(row.get("evaluation"))]
+    logger.debug("gradio.match.shown", extra={"match_key": match_key})
+    return [header, final_summary, final_detail, *opinions, _evaluation_markdown(row.get("evaluation"))]
 
 
 def analyze_date(value: str | datetime | None):
@@ -115,9 +122,11 @@ def analyze_date(value: str | datetime | None):
     day = date.fromisoformat(day_text)
     if day > datetime.now(ZoneInfo(MATCH_TIMEZONE)).date():
         raise gr.Error("Future matches are outside Phase 1.")
+    logger.info("gradio.analysis.requested", extra={"match_date": day_text})
     try:
         results = run_for_date(day)
     except Exception as error:
+        logger.exception("gradio.analysis.failed", extra={"match_date": day_text})
         raise gr.Error(f"Analysis failed: {type(error).__name__}: {error}") from error
     dropdown, _, rows, leaderboard = load_date(day_text)
     return (
@@ -129,7 +138,9 @@ def analyze_date(value: str | datetime | None):
 
 
 def build_app() -> gr.Blocks:
+    configure_logging()
     initialize_database()
+    logger.info("gradio.app.build", extra={"model_count": len(MODELS)})
     today = datetime.now(ZoneInfo(MATCH_TIMEZONE)).date().isoformat()
     css = """
     .hero {text-align:center; padding:18px; border-radius:18px;
@@ -144,7 +155,12 @@ def build_app() -> gr.Blocks:
     .leaderboard-card {border:2px solid #f4b942; border-radius:14px; padding:16px;
                        background:linear-gradient(135deg,#fff8dd,#ffffff)}
     """
-    with gr.Blocks(title="AI World Cup Championship", css=css) as demo:
+    gradio_major = int(gr.__version__.split(".", 1)[0])
+    blocks_options = {"title": "AI World Cup Championship"}
+    if gradio_major < 6:
+        blocks_options["css"] = css
+
+    with gr.Blocks(**blocks_options) as demo:
         rows_state = gr.State([])
         gr.HTML("<div class='hero'><h1>AI World Cup Championship</h1><p>Five analysts. One final whistle.</p></div>")
         gr.Markdown("预测仅供参考。赔率会变化，模型可能出错，任何投注都没有保证。")
@@ -155,27 +171,27 @@ def build_app() -> gr.Blocks:
         status = gr.Markdown()
         match_select = gr.Dropdown(label="Match", choices=[])
         match_header = gr.Markdown()
-        model_boxes = []
-        for start in range(0, len(MODELS), 3):
-            with gr.Row():
-                for model in MODELS[start:start + 3]:
-                    with gr.Column(elem_classes="model-card"):
-                        gr.Markdown(f"### {model['id']}")
-                        summary_box = gr.Markdown(elem_classes="model-summary")
-                        with gr.Accordion("展开详细分析", open=False):
-                            detail_box = gr.Markdown()
-                        model_boxes.extend([summary_box, detail_box])
         with gr.Column(elem_classes="final-card"):
             gr.Markdown("## Master AI 最终结论")
             final_summary_box = gr.Markdown()
             with gr.Accordion("展开综合分析", open=False):
                 final_detail_box = gr.Markdown()
+        gr.Markdown("## 五模型并行观点")
+        model_boxes = []
+        with gr.Row():
+            for model in MODELS:
+                with gr.Column(elem_classes="model-card", min_width=260):
+                    gr.Markdown(f"### {model['id']}")
+                    summary_box = gr.Markdown(elem_classes="model-summary")
+                    with gr.Accordion("展开详细分析", open=False):
+                        detail_box = gr.Markdown()
+                    model_boxes.extend([summary_box, detail_box])
         with gr.Column(elem_classes="review-card"):
             gr.Markdown("## 赛后 AI 复盘")
             evaluation_box = gr.Markdown()
         leaderboard_box = gr.Markdown(_leaderboard_markdown(), elem_classes="leaderboard-card")
 
-        outputs = [match_header, *model_boxes, final_summary_box, final_detail_box, evaluation_box]
+        outputs = [match_header, final_summary_box, final_detail_box, *model_boxes, evaluation_box]
         date_outputs = [match_select, status, rows_state, leaderboard_box]
         load_button.click(load_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs
@@ -187,9 +203,12 @@ def build_app() -> gr.Blocks:
         demo.load(load_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs
         )
+    demo.app_css = css
+    demo.css_on_launch = gradio_major >= 6
     return demo
 
 
 if __name__ == "__main__":
     demo = build_app()
-    demo.launch()
+    launch_options = {"css": demo.app_css} if demo.css_on_launch else {}
+    demo.launch(**launch_options)

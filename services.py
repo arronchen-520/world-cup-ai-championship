@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time as clock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
@@ -21,6 +23,7 @@ from config import (
 
 
 SOCIAL_DOMAINS = ["instagram.com", "facebook.com", "x.com", "tiktok.com", "youtube.com"]
+logger = logging.getLogger(__name__)
 
 
 class RankedAnalyst(BaseModel):
@@ -60,22 +63,45 @@ def openrouter_chat(
 ) -> str:
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
+    started = clock.perf_counter()
+    input_characters = sum(len(message.get("content", "")) for message in messages)
+    logger.info(
+        "openrouter.request.start",
+        extra={"model": model, "input_characters": input_characters},
+    )
     payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
     if response_format is not None:
         payload["response_format"] = response_format
-    response = httpx.post(
-        OPENROUTER_URL,
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/ai-world-cup-championship",
-            "X-Title": "AI World Cup Championship",
+    try:
+        response = httpx.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/ai-world-cup-championship",
+                "X-Title": "AI World Cup Championship",
+            },
+            json=payload,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+    except Exception:
+        logger.exception(
+            "openrouter.request.failed",
+            extra={"model": model, "elapsed_seconds": round(clock.perf_counter() - started, 3)},
+        )
+        raise
+    logger.info(
+        "openrouter.request.complete",
+        extra={
+            "model": model,
+            "input_characters": input_characters,
+            "output_characters": len(content or ""),
+            "elapsed_seconds": round(clock.perf_counter() - started, 3),
         },
-        json=payload,
-        timeout=REQUEST_TIMEOUT_SECONDS,
     )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    return content
 
 
 def get_fixtures_football_data(day: date) -> list[dict[str, Any]]:
@@ -85,6 +111,11 @@ def get_fixtures_football_data(day: date) -> list[dict[str, Any]]:
     local_zone = ZoneInfo(MATCH_TIMEZONE)
     utc_start = datetime.combine(day, time.min, tzinfo=local_zone).astimezone(timezone.utc)
     utc_end = (datetime.combine(day, time.min, tzinfo=local_zone) + timedelta(days=1)).astimezone(timezone.utc)
+    started = clock.perf_counter()
+    logger.info(
+        "football_data.fixtures.start",
+        extra={"match_date": day.isoformat(), "utc_start": utc_start.isoformat(), "utc_end": utc_end.isoformat()},
+    )
     response = httpx.get(
         f"{FOOTBALL_DATA_URL}/competitions/{FOOTBALL_DATA_COMPETITION}/matches",
         headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
@@ -123,6 +154,16 @@ def get_fixtures_football_data(day: date) -> list[dict[str, Any]]:
             "source": "football-data.org",
             "raw": match,
         })
+    logger.info(
+        "football_data.fixtures.complete",
+        extra={
+            "match_date": day.isoformat(),
+            "provider_matches": len(payload.get("matches", [])),
+            "filtered_matches": len(fixtures),
+            "finished_matches": sum(fixture["status"] == "FINISHED" for fixture in fixtures),
+            "elapsed_seconds": round(clock.perf_counter() - started, 3),
+        },
+    )
     return fixtures
 
 
@@ -166,7 +207,13 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
     referee_names = ", ".join(
         referee.get("name", "") for referee in match.get("referees", []) if referee.get("name")
     )
+    match_key = match.get("match_key") or f"{home}-vs-{away}-{day}"
     fixture = f"{home} vs {away} FIFA World Cup 2026 {display_date}"
+    started = clock.perf_counter()
+    logger.info(
+        "tavily.research.start",
+        extra={"match_key": match_key, "home_team": home, "away_team": away},
+    )
     context_terms = "tactical preview"
     if match.get("venue"):
         context_terms += f" venue {match['venue']} weather"
@@ -191,6 +238,17 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
     ]
 
     def search(spec: dict[str, Any]) -> dict[str, Any]:
+        search_started = clock.perf_counter()
+        logger.info(
+            "tavily.search.start",
+            extra={
+                "match_key": match_key,
+                "category": spec["category"],
+                "search_depth": TAVILY_SEARCH_DEPTH,
+                "max_results": TAVILY_MAX_RESULTS,
+                "query_characters": len(spec["query"]),
+            },
+        )
         search_args: dict[str, Any] = {
             "query": spec["query"],
             "search_depth": TAVILY_SEARCH_DEPTH,
@@ -202,7 +260,7 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
             **search_args,
         )
         raw_results = response.get("results", [])
-        return {
+        normalized = {
             "category": spec["category"],
             "query": spec["query"],
             "results": [
@@ -215,10 +273,30 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
                 for result in raw_results
             ]
         }
+        logger.info(
+            "tavily.search.complete",
+            extra={
+                "match_key": match_key,
+                "category": spec["category"],
+                "result_count": len(normalized["results"]),
+                "content_characters": sum(len(item["content"]) for item in normalized["results"]),
+                "elapsed_seconds": round(clock.perf_counter() - search_started, 3),
+            },
+        )
+        return normalized
 
     with ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(search, search_specs))
-    return {"searches": results}
+    research = {"searches": results}
+    logger.info(
+        "tavily.research.complete",
+        extra={
+            "match_key": match_key,
+            "research_characters": len(json.dumps(research, ensure_ascii=False)),
+            "elapsed_seconds": round(clock.perf_counter() - started, 3),
+        },
+    )
+    return research
 
 
 def analyst_prompt(match: dict[str, Any], research: dict[str, Any]) -> str:
@@ -254,6 +332,11 @@ Research results:
 
 
 def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
+    started = clock.perf_counter()
+    logger.info(
+        "analyst_panel.start",
+        extra={"model_count": len(models), "prompt_characters": len(prompt)},
+    )
     outputs: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=min(5, len(models))) as pool:
         futures = {
@@ -269,8 +352,20 @@ def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
             model = futures[future]
             try:
                 outputs[model["id"]] = future.result()
+                logger.info(
+                    "analyst.complete",
+                    extra={"model_id": model["id"], "output_characters": len(outputs[model["id"]])},
+                )
             except Exception as error:  # Preserve other opinions if one provider fails.
                 outputs[model["id"]] = f"Model unavailable: {type(error).__name__}: {error}"
+                logger.error(
+                    "analyst.failed",
+                    extra={"model_id": model["id"], "error_type": type(error).__name__},
+                )
+    logger.info(
+        "analyst_panel.complete",
+        extra={"model_count": len(models), "elapsed_seconds": round(clock.perf_counter() - started, 3)},
+    )
     return outputs
 
 
@@ -309,6 +404,12 @@ def evaluate_analysts(
     """Rank exactly five analyst reports against the finished regulation-time result."""
     if len(outputs) != 5:
         raise ValueError(f"Expected exactly five analyst outputs, received {len(outputs)}")
+    started = clock.perf_counter()
+    match_key = match.get("match_key") or f"{match['home_team']}-vs-{match['away_team']}"
+    logger.info(
+        "evaluation.start",
+        extra={"match_key": match_key, "model_count": len(outputs), "model": EVALUATION_MODEL},
+    )
     schema = AnalystEvaluation.model_json_schema()
     prompt = f"""You are the post-match judge for an AI football prediction championship.
 Evaluate exactly five analyst reports against the actual regulation-time result. Do not evaluate or mention
@@ -345,4 +446,12 @@ Analyst reports: {json.dumps(outputs, ensure_ascii=False)}"""
     result = evaluation.model_dump(mode="json")
     for item in result["ranking"]:
         item["points"] = 6 - item["rank"]
+    logger.info(
+        "evaluation.complete",
+        extra={
+            "match_key": match_key,
+            "model": EVALUATION_MODEL,
+            "elapsed_seconds": round(clock.perf_counter() - started, 3),
+        },
+    )
     return result
