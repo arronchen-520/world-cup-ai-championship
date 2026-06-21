@@ -5,5 +5,3 @@ __pycache__/
 *.pyc
 data/*.db-shm
 data/*.db-wal
-WALKTHROUGH.md
-ai_world_cup_walkthrough.ipynb

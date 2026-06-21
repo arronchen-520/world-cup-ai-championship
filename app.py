@@ -98,7 +98,7 @@ def build_app() -> gr.Blocks:
     .final-card {border:2px solid #088395; border-radius:14px; padding:16px;
                  background:linear-gradient(135deg,#f0ffff,#ffffff)}
     """
-    with gr.Blocks(title="AI World Cup Championship") as demo:
+    with gr.Blocks(title="AI World Cup Championship", css=css) as demo:
         rows_state = gr.State([])
         gr.HTML("<div class='hero'><h1>AI World Cup Championship</h1><p>Five analysts. One final whistle.</p></div>")
         gr.Markdown("预测仅供参考。赔率会变化，模型可能出错，任何投注都没有保证。")
@@ -136,10 +136,9 @@ def build_app() -> gr.Blocks:
         demo.load(load_date, day_input, [match_select, status, rows_state]).then(
             show_match, [match_select, rows_state], outputs
         )
-    demo.app_css = css
     return demo
 
 
 if __name__ == "__main__":
     demo = build_app()
-    demo.launch(css=demo.app_css)
+    demo.launch()

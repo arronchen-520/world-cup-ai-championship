@@ -6,31 +6,98 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 from tavily import TavilyClient
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from config import (
-    ANALYST_MAX_TOKENS, FOOTBALL_DATA_API_KEY, FOOTBALL_DATA_COMPETITION, MATCH_TIMEZONE,
-    FOOTBALL_DATA_URL, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
-    RESEARCH_CONTENT_CHARS, TAVILY_API_KEY, TAVILY_MAX_RESULTS,
+    ANALYST_MAX_TOKENS, BETTING_CONTENT_CHARS, BETTING_MAX_RESULTS, CONTEXT_CONTENT_CHARS,
+    CONTEXT_MAX_RESULTS, FOOTBALL_DATA_API_KEY, FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL,
+    MATCH_TIMEZONE, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
+    RESEARCH_SUMMARY_MAX_TOKENS, RESEARCH_SUMMARY_MODEL, TAVILY_API_KEY, TAVILY_SEARCH_DEPTH,
+    TEAM_NEWS_CONTENT_CHARS, TEAM_NEWS_MAX_RESULTS,
 )
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
+SOCIAL_DOMAINS = ["instagram.com", "facebook.com", "x.com", "tiktok.com", "youtube.com"]
+BETTING_ALLOWED_DOMAINS = [
+    "actionnetwork.com",
+    "bet365.com",
+    "betmgm.com",
+    "caesars.com",
+    "covers.com",
+    "draftkings.com",
+    "espn.com",
+    "fanduel.com",
+    "foxsports.com",
+    "ladbrokes.com",
+    "oddschecker.com",
+    "oddspedia.com",
+    "paddypower.com",
+    "racingpost.com",
+    "sports.yahoo.com",
+    "thelines.com",
+    "williamhill.com",
+]
+
+
+class EvidencePoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim: str = Field(min_length=1, max_length=240)
+    source_url: str | None = Field(default=None, max_length=600)
+
+
+class BettingPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    market: str = Field(min_length=1, max_length=100)
+    price_or_probability: str = Field(min_length=1, max_length=120)
+    source_url: str | None = Field(default=None, max_length=600)
+    caveat: str | None = Field(default=None, max_length=180)
+
+
+class ResearchDigest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_news_form_h2h: list[EvidencePoint] = Field(default_factory=list, max_length=8)
+    betting_markets: list[BettingPoint] = Field(default_factory=list, max_length=10)
+    tactics_venue_weather: list[EvidencePoint] = Field(default_factory=list, max_length=5)
+    conflicts_and_gaps: list[str] = Field(default_factory=list, max_length=6)
+
+
+def _retryable_http_error(error: BaseException) -> bool:
+    if isinstance(error, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code in {408, 429} or error.response.status_code >= 500
+    return False
+
+
+@retry(
+    retry=retry_if_exception(_retryable_http_error),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=8),
+    reraise=True,
+)
 def openrouter_chat(
     model: str,
     messages: list[dict[str, str]],
     temperature: float = 0.2,
     max_tokens: int | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> str:
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
     payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if response_format is not None:
+        payload["response_format"] = response_format
     response = httpx.post(
         OPENROUTER_URL,
         headers={
@@ -101,43 +168,102 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
         referee.get("name", "") for referee in match.get("referees", []) if referee.get("name")
     )
     fixture = f"{home} vs {away} FIFA World Cup 2026 {display_date}"
-    queries = [
-        f"{fixture} latest team news injuries suspensions predicted lineups recent form head to head",
-        f"{fixture} latest bookmaker odds 1X2 over under 2.5 both teams to score implied probability",
-        f"{fixture} tactical preview venue weather referee {referee_names}".strip(),
+    search_specs = [
+        {
+            "query": f"{fixture} latest team news injuries suspensions predicted lineups last 5 matches head to head",
+            "max_results": TEAM_NEWS_MAX_RESULTS,
+            "content_chars": TEAM_NEWS_CONTENT_CHARS,
+        },
+        {
+            "query": (
+                f"{fixture} latest bookmaker odds 1X2 double chance draw no bet Asian handicap "
+                "totals over under 1.5 2.5 3.5 both teams to score"
+            ),
+            "max_results": BETTING_MAX_RESULTS,
+            "content_chars": BETTING_CONTENT_CHARS,
+            "allowed_domains": BETTING_ALLOWED_DOMAINS,
+        },
+        {
+            "query": f"{fixture} tactical preview venue weather referee {referee_names}".strip(),
+            "max_results": CONTEXT_MAX_RESULTS,
+            "content_chars": CONTEXT_CONTENT_CHARS,
+        },
     ]
 
-    def search(query: str) -> dict[str, Any]:
+    def search(spec: dict[str, Any]) -> dict[str, Any]:
+        search_args: dict[str, Any] = {
+            "query": spec["query"],
+            "search_depth": TAVILY_SEARCH_DEPTH,
+            "max_results": spec["max_results"],
+            "include_answer": False,
+            "exclude_domains": SOCIAL_DOMAINS,
+        }
+        if spec.get("allowed_domains"):
+            search_args["include_domains"] = spec["allowed_domains"]
         response = client.search(
-            query=query,
-            search_depth="advanced",
-            max_results=TAVILY_MAX_RESULTS,
-            include_answer=False,
-            exclude_domains=["instagram.com", "facebook.com", "x.com", "tiktok.com", "youtube.com"],
+            **search_args,
         )
+        raw_results = response.get("results", [])
+        if spec.get("allowed_domains"):
+            raw_results = [
+                result for result in raw_results
+                if any(
+                    (hostname := (urlparse(result.get("url") or "").hostname or "").lower()) == domain
+                    or hostname.endswith(f".{domain}")
+                    for domain in spec["allowed_domains"]
+                )
+            ]
         return {
             "results": [
                 {
                     "title": result.get("title"),
                     "url": result.get("url"),
-                    "content": (result.get("content") or "")[:RESEARCH_CONTENT_CHARS],
+                    "score": result.get("score"),
+                    "content": (result.get("content") or "")[:spec["content_chars"]],
                 }
-                for result in response.get("results", [])
+                for result in raw_results
             ]
         }
 
     with ThreadPoolExecutor(max_workers=3) as pool:
-        results = list(pool.map(search, queries))
-    return {"queries": queries, "searches": results}
+        results = list(pool.map(search, search_specs))
+    return {"queries": [spec["query"] for spec in search_specs], "searches": results}
 
 
-def analyst_prompt(match: dict[str, Any], research: dict[str, Any]) -> str:
+def summarize_research(match: dict[str, Any], research: dict[str, Any]) -> dict[str, Any]:
+    """Compress Tavily evidence once, then validate the shared digest with Pydantic."""
+    schema = ResearchDigest.model_json_schema()
+    prompt = f"""Summarize the search evidence for {match['home_team']} vs {match['away_team']}.
+Return one JSON object matching the supplied schema. Use Simplified Chinese for claims.
+Preserve source URLs, quoted odds/lines, and uncertainty. Do not infer missing current facts.
+For head-to-head, note when old meetings have limited relevance. For betting, capture all available
+1X2, double-chance, draw-no-bet, Asian handicap, BTTS, and totals 1.5/2.5/3.5 markets.
+Keep only decision-relevant evidence and explicitly list contradictions or missing markets.
+
+JSON schema:
+{json.dumps(schema, ensure_ascii=False)}
+
+Search evidence:
+{json.dumps(research, ensure_ascii=False)}"""
+    response = openrouter_chat(
+        RESEARCH_SUMMARY_MODEL,
+        [{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=RESEARCH_SUMMARY_MAX_TOKENS,
+        response_format={"type": "json_object"},
+    ).strip()
+    if response.startswith("```"):
+        response = response.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    return ResearchDigest.model_validate_json(response).model_dump(mode="json")
+
+
+def analyst_prompt(match: dict[str, Any], research_digest: dict[str, Any]) -> str:
     return f"""You are one independent football analyst in an AI championship.
 Analyze {match['home_team']} vs {match['away_team']} in {match['competition']} on {match['match_date']}.
 Fixture details: group={match.get('group_name') or 'unknown'}, kickoff={match.get('kickoff') or 'unknown'},
 venue={match.get('venue') or 'unknown'}, referees={json.dumps(match.get('referees', []), ensure_ascii=False)}.
 
-Use the supplied Tavily research as current evidence, but also add your own independent football analysis,
+Use the supplied evidence digest as current evidence, but also add your own independent football analysis,
 tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
 Never invent current injuries, lineups, or odds. Flag stale/conflicting information and account for bookmaker margin.
 
@@ -158,8 +284,8 @@ When evidence is weak, recommend “不下注”. Put the short actionable answe
 快速结论不超过 180 个中文字符；详细分析不超过 600 个中文字符。
 Write the entire response in Simplified Chinese, including all headings and explanations.
 
-Research payload:
-{json.dumps(research, ensure_ascii=False)}"""
+Research digest:
+{json.dumps(research_digest, ensure_ascii=False)}"""
 
 
 def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
@@ -184,7 +310,7 @@ def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
     return outputs
 
 
-def master_prompt(match: dict[str, Any], research: dict[str, Any], outputs: dict[str, str]) -> str:
+def master_prompt(match: dict[str, Any], research_digest: dict[str, Any], outputs: dict[str, str]) -> str:
     return f"""Act as the chair of a football prediction panel. Synthesize the independent reports below.
 Do not decide by majority vote alone: weigh source quality, reasoning, market prices, injuries, and disagreement.
 Never invent facts or odds. If there is no defensible edge, explicitly recommend No bet.
@@ -206,5 +332,5 @@ If there is no defensible edge, explicitly recommend “不下注”. Put the fi
 Write the entire final recommendation in Simplified Chinese.
 
 Match: {json.dumps(match, default=str)}
-Research: {json.dumps(research, ensure_ascii=False)}
+Research digest: {json.dumps(research_digest, ensure_ascii=False)}
 Panel reports: {json.dumps(outputs, ensure_ascii=False)}"""
