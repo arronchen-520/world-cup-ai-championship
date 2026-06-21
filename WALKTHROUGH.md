@@ -157,11 +157,11 @@ Hugging Face Spaces, Render, or another persistent Python host, or publish a sta
 
 ## 4. Cost, quality, and safety
 
-- One match produces three Tavily searches, five analyst calls, and one master call. A busy match day can be
-  expensive. Start with one date and inspect provider dashboards before enabling cron.
+- One match produces three Tavily searches, one DeepSeek summary call, five analyst calls, and one master
+  call. A busy match day can be expensive. Start with one date and inspect provider dashboards before cron.
 - Team news is capped at 4 results / 1,200 characters each, betting at 5 / 1,600, and tactics/weather at
-  3 / 800. `ANALYST_MAX_TOKENS` and `MASTER_MAX_TOKENS` cap generated output; `MAX_MATCHES_PER_RUN` limits
-  the daily multiplier.
+  3 / 800. Output caps are 1,100 tokens for the digest, 1,200 per analyst, and 1,800 for the master;
+  `MAX_MATCHES_PER_RUN=8` limits the daily multiplier.
 - Prompts also cap Chinese response length: 180/600 characters for analyst summary/detail and 220/800 for
   master conclusion/analysis. This encourages graceful shortening before the hard token ceiling is reached.
 - The largest cost lever is `ENABLED_MODEL_IDS`: three analysts instead of five cuts analyst calls by 40%.

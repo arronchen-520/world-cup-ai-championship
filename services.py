@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -48,7 +48,7 @@ BETTING_ALLOWED_DOMAINS = [
 class EvidencePoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim: str = Field(min_length=1, max_length=240)
+    claim: str = Field(min_length=1, max_length=160)
     source_url: str | None = Field(default=None, max_length=600)
 
 
@@ -58,16 +58,19 @@ class BettingPoint(BaseModel):
     market: str = Field(min_length=1, max_length=100)
     price_or_probability: str = Field(min_length=1, max_length=120)
     source_url: str | None = Field(default=None, max_length=600)
-    caveat: str | None = Field(default=None, max_length=180)
+    caveat: str | None = Field(default=None, max_length=120)
+
+
+DigestGap = Annotated[str, Field(min_length=1, max_length=160)]
 
 
 class ResearchDigest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    team_news_form_h2h: list[EvidencePoint] = Field(default_factory=list, max_length=8)
-    betting_markets: list[BettingPoint] = Field(default_factory=list, max_length=10)
-    tactics_venue_weather: list[EvidencePoint] = Field(default_factory=list, max_length=5)
-    conflicts_and_gaps: list[str] = Field(default_factory=list, max_length=6)
+    team_news_form_h2h: list[EvidencePoint] = Field(default_factory=list, max_length=5)
+    betting_markets: list[BettingPoint] = Field(default_factory=list, max_length=6)
+    tactics_venue_weather: list[EvidencePoint] = Field(default_factory=list, max_length=3)
+    conflicts_and_gaps: list[DigestGap] = Field(default_factory=list, max_length=4)
 
 
 def _retryable_http_error(error: BaseException) -> bool:
