@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -646,9 +647,33 @@ def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
     return outputs
 
 
+def _blind_panel_reports(match: dict[str, Any], outputs: dict[str, str]) -> dict[str, str]:
+    match_identity = str(
+        match.get("match_key")
+        or "|".join([
+            str(match.get("match_date") or ""),
+            str(match.get("home_team") or ""),
+            str(match.get("away_team") or ""),
+        ])
+    )
+    ordered_reports = sorted(
+        outputs.items(),
+        key=lambda item: hashlib.sha256(
+            f"{match_identity}|{item[0]}".encode("utf-8")
+        ).hexdigest(),
+    )
+    return {
+        f"Analyst {chr(ord('A') + index)}": report
+        for index, (_, report) in enumerate(ordered_reports)
+    }
+
+
 def master_prompt(match: dict[str, Any], research: dict[str, Any], outputs: dict[str, str]) -> str:
+    blind_reports = _blind_panel_reports(match, outputs)
     return f"""Act as the chair of a football prediction panel. Synthesize the independent reports below.
 Do not decide by majority vote alone: weigh source quality, reasoning, market prices, injuries, and disagreement.
+The analyst identities are intentionally hidden. Evaluate only the evidence, calibration, internal consistency,
+and market reasoning in each report. Do not infer model identity or apply brand, provider, or self-preference weighting.
 Never invent facts or listed odds. The supplied structured odds are context, not a limit on valid betting recommendations.
 You may recommend any football bet type that has a defensible edge; if the bet is not priced in supplied odds, give a fair
 target decimal-odds range such as "only if 1.85+" or "value around 2.10-2.30".
@@ -677,7 +702,7 @@ Write the entire final recommendation in Simplified Chinese.
 
 Match: {json.dumps(match, default=str)}
 Research results: {json.dumps(research, ensure_ascii=False)}
-Panel reports: {json.dumps(outputs, ensure_ascii=False)}"""
+Anonymous panel reports: {json.dumps(blind_reports, ensure_ascii=False)}"""
 
 
 def evaluate_analysts(

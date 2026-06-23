@@ -58,3 +58,31 @@ def test_master_prompt_rechecks_betting_candidates():
     assert "target decimal-odds range" in prompt
     assert "Conservative bet = high-confidence" in prompt
     assert "Aggressive bet = positive-odds/value-seeking" in prompt
+
+
+def test_master_prompt_blinds_model_identities_and_keeps_reports():
+    match = {
+        "match_key": "match-1",
+        "home_team": "A",
+        "away_team": "B",
+        "competition": "World Cup",
+        "match_date": "2026-06-21",
+        "referees": [],
+    }
+    outputs = {
+        "gpt-5.5": "report from first analyst",
+        "claude-sonnet-4.6": "report from second analyst",
+        "gemini-3.5-flash": "report from third analyst",
+        "grok-4.3": "report from fourth analyst",
+        "deepseek-v3": "report from fifth analyst",
+    }
+
+    prompt = master_prompt(match, {"searches": []}, outputs)
+
+    assert "Anonymous panel reports:" in prompt
+    assert "analyst identities are intentionally hidden" in prompt
+    assert "Do not infer model identity" in prompt
+    assert all(model_id not in prompt for model_id in outputs)
+    assert all(report in prompt for report in outputs.values())
+    assert all(f'"Analyst {label}"' in prompt for label in "ABCDE")
+    assert prompt == master_prompt(match, {"searches": []}, dict(reversed(outputs.items())))
