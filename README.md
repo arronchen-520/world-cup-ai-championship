@@ -114,10 +114,18 @@ The durable page is the Hugging Face Space URL, not the temporary `gradio.live` 
    - `TAVILY_API_KEY`
    - `FOOTBALL_DATA_API_KEY`
    - `ODDS_API_KEY`
+   - `HF_TOKEN`
 5. Go to `Actions` and enable workflows.
 6. Manually run `Daily AI football analysis` with date `2026-06-23` for the first run.
 
-The workflow also runs near Chicago midnight. It refreshes prior unevaluated matches, analyzes the current match date, and can commit the updated SQLite database back to the repository.
+`HF_TOKEN` is a Hugging Face user access token with write access to the Space. The workflow uses it to push
+the latest app code and `data/championship.db` to `xchen49/world-cup-ai-championship` after each analysis run.
+
+The workflow also runs near Chicago midnight. It refreshes prior unevaluated matches, analyzes the current match date,
+commits the updated SQLite database back to GitHub, and syncs the same state to Hugging Face Spaces.
+
+To disable automation later, open `Actions > Daily AI football analysis`, click the `...` menu, and choose
+`Disable workflow`. You can re-enable it from the same page.
 
 ## Upload Commands
 
@@ -163,4 +171,6 @@ python app.py
 
 如果你想要持久网页，需要把项目部署到 Hugging Face Spaces 这类托管平台。持久 URL 是 Space 的网页地址，不是 `gradio.live` 临时链接。
 
-GitHub Actions 需要设置四个 secrets：`OPENROUTER_API_KEY`、`TAVILY_API_KEY`、`FOOTBALL_DATA_API_KEY`、`ODDS_API_KEY`。第一次手动运行 workflow 时，date 填 `2026-06-23`。
+GitHub Actions 需要设置五个 secrets：`OPENROUTER_API_KEY`、`TAVILY_API_KEY`、`FOOTBALL_DATA_API_KEY`、`ODDS_API_KEY`、`HF_TOKEN`。第一次手动运行 workflow 时，date 填 `2026-06-23`。
+
+如果以后想暂停自动任务：进入 GitHub 的 `Actions > Daily AI football analysis`，点右上角 `...`，选择 `Disable workflow`。
