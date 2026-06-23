@@ -70,5 +70,13 @@ jobs:
           fi
           git remote remove space || true
           git remote add space "https://xchen49:${HF_TOKEN}@huggingface.co/spaces/xchen49/world-cup-ai-championship"
-          git fetch --depth=1 space main
-          git push --force-with-lease space HEAD:main
+          git fetch --depth=1 space main || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan hf-space-sync
+          git add -A
+          if [ -f data/championship.db ]; then
+            git add -f data/championship.db
+          fi
+          git commit -m "sync Hugging Face Space"
+          git push --force-with-lease space hf-space-sync:main
