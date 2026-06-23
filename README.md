@@ -62,22 +62,33 @@ Open the local Gradio URL printed in the terminal.
 
 ## Make The Gradio App Shareable
 
-For a temporary public Gradio link from your local machine:
+By default, `python app.py` starts Gradio with `share=True`. Gradio will create a temporary public
+`https://...gradio.live` URL that points back to the process running on your computer.
 
 ```powershell
-$env:GRADIO_SHARE="true"
 python app.py
 ```
 
-Gradio will print a public `https://...gradio.live` URL. Keep the terminal running while sharing it.
+Keep the terminal running while sharing that link. When your computer sleeps, the terminal closes, or the
+Gradio tunnel expires, the link stops working. This is useful for demos, not for a permanent website.
 
-For a more stable public website, deploy this repo to Hugging Face Spaces:
+To disable public sharing locally:
+
+```powershell
+$env:GRADIO_SHARE="false"
+python app.py
+```
+
+For a persistent public website, deploy this repo to Hugging Face Spaces:
 
 1. Create a new Space with SDK `Gradio`.
 2. Upload the repo files.
-3. Add the same environment variables as Space secrets.
+3. Add the same environment variables as Space secrets: `OPENROUTER_API_KEY`, `TAVILY_API_KEY`,
+   `FOOTBALL_DATA_API_KEY`, and `ODDS_API_KEY`.
 4. Set the Space app file to `app.py`.
-5. Run `python run_daily.py --date 2026-06-23` locally or through your scheduled job to populate data.
+5. Run `python run_daily.py --date 2026-06-23` locally or through GitHub Actions to populate data.
+
+The durable page is the Hugging Face Space URL, not the temporary `gradio.live` URL.
 
 ## GitHub Setup
 
@@ -128,11 +139,14 @@ python run_daily.py --date 2026-06-23
 python app.py
 ```
 
-临时分享 Gradio 页面：
+默认情况下，`python app.py` 会用 `share=True` 启动 Gradio，并生成一个临时公网链接：
 
 ```powershell
-$env:GRADIO_SHARE="true"
 python app.py
 ```
+
+这个链接适合 demo，但不是永久网站。只要你的电脑睡眠、终端关闭，或者 Gradio tunnel 过期，链接就会失效。
+
+如果你想要持久网页，需要把项目部署到 Hugging Face Spaces 这类托管平台。持久 URL 是 Space 的网页地址，不是 `gradio.live` 临时链接。
 
 GitHub Actions 需要设置四个 secrets：`OPENROUTER_API_KEY`、`TAVILY_API_KEY`、`FOOTBALL_DATA_API_KEY`、`ODDS_API_KEY`。第一次手动运行 workflow 时，date 填 `2026-06-23`。
