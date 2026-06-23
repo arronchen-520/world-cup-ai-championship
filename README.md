@@ -1,3 +1,17 @@
+---
+title: World Cup AI Championship
+emoji: 📊
+colorFrom: green
+colorTo: purple
+sdk: gradio
+sdk_version: 6.19.0
+python_version: "3.13"
+app_file: app.py
+pinned: false
+license: mit
+short_description: AI-powered FIFA World Cup prediction championship
+---
+
 # AI World Cup Championship
 
 Five AI analysts preview every World Cup match, a master model synthesizes their opinions, and a post-match judge scores the analysts after the final whistle.
