@@ -1,3 +1,17 @@
+---
+title: World Cup AI Championship
+emoji: 📊
+colorFrom: green
+colorTo: purple
+sdk: gradio
+sdk_version: 6.19.0
+python_version: "3.13"
+app_file: app.py
+pinned: false
+license: mit
+short_description: AI-powered FIFA World Cup model championship
+---
+
 # AI World Cup Championship
 
 **Live app:** [huggingface.co/spaces/xchen49/world-cup-ai-championship](https://huggingface.co/spaces/xchen49/world-cup-ai-championship)
