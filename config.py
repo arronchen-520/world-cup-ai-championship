@@ -22,6 +22,10 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 ODDS_API_SPORT = os.getenv("ODDS_API_SPORT", "soccer_fifa_world_cup")
 ODDS_API_BOOKMAKER = os.getenv("ODDS_API_BOOKMAKER", "bovada")
 ODDS_API_MARKETS = os.getenv("ODDS_API_MARKETS", "h2h,spreads,totals")
+ODDS_API_ADDITIONAL_MARKETS = os.getenv(
+    "ODDS_API_ADDITIONAL_MARKETS",
+    "alternate_totals,btts,alternate_spreads",
+)
 FOOTBALL_DATA_COMPETITION = os.getenv("FOOTBALL_DATA_COMPETITION", "WC")
 TAVILY_SEARCH_DEPTH = os.getenv("TAVILY_SEARCH_DEPTH", "advanced")
 TAVILY_MAX_RESULTS = int(os.getenv("TAVILY_MAX_RESULTS", "5"))

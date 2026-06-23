@@ -77,6 +77,8 @@ OPENROUTER_API_KEY=your_openrouter_key
 TAVILY_API_KEY=your_tavily_key
 FOOTBALL_DATA_API_KEY=your_football_data_key
 ODDS_API_KEY=your_the_odds_api_key
+ODDS_API_MARKETS=h2h,spreads,totals
+ODDS_API_ADDITIONAL_MARKETS=alternate_totals,btts,alternate_spreads
 
 MATCH_TIMEZONE=America/Chicago
 LOG_LEVEL=INFO

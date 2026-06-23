@@ -19,9 +19,9 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from config import (
     EVALUATION_MODEL, FOOTBALL_DATA_API_KEY, FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL,
-    MATCH_TIMEZONE, ODDS_API_BOOKMAKER, ODDS_API_KEY, ODDS_API_MARKETS, ODDS_API_SPORT,
-    ODDS_API_URL, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
-    TAVILY_API_KEY, TAVILY_MAX_RESULTS, TAVILY_SEARCH_DEPTH,
+    MATCH_TIMEZONE, ODDS_API_ADDITIONAL_MARKETS, ODDS_API_BOOKMAKER, ODDS_API_KEY,
+    ODDS_API_MARKETS, ODDS_API_SPORT, ODDS_API_URL, OPENROUTER_API_KEY, OPENROUTER_URL,
+    REQUEST_TIMEOUT_SECONDS, TAVILY_API_KEY, TAVILY_MAX_RESULTS, TAVILY_SEARCH_DEPTH,
 )
 
 
@@ -54,6 +54,12 @@ def _retryable_http_error(error: BaseException) -> bool:
     if isinstance(error, httpx.HTTPStatusError):
         return error.response.status_code in {408, 429} or error.response.status_code >= 500
     return False
+
+
+def _safe_http_error(error: httpx.HTTPError) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"HTTP {error.response.status_code}"
+    return type(error).__name__
 
 
 @retry(
@@ -228,19 +234,45 @@ def _normalize_team_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", normalized)
 
 
-def _simplify_odds_event(event: dict[str, Any]) -> dict[str, Any]:
-    bookmaker = (event.get("bookmakers") or [{}])[0]
+def _market_keys(value: str) -> list[str]:
+    return [market.strip() for market in value.split(",") if market.strip()]
+
+
+def _simplify_odds_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
+    simplified = {
+        "name": outcome.get("name"),
+        "price": outcome.get("price"),
+    }
+    if outcome.get("description") is not None:
+        simplified["description"] = outcome["description"]
+    if outcome.get("point") is not None:
+        simplified["point"] = outcome["point"]
+    return simplified
+
+
+def _simplify_bookmaker_markets(bookmaker: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     markets = {}
+    market_last_updates = {}
     for market in bookmaker.get("markets", []):
-        markets[market.get("key")] = [
-            {
-                "name": outcome.get("name"),
-                "price": outcome.get("price"),
-                "point": outcome.get("point"),
-            }
+        market_key = market.get("key")
+        if not market_key:
+            continue
+        markets[market_key] = [
+            _simplify_odds_outcome(outcome)
             for outcome in market.get("outcomes", [])
         ]
-    configured_markets = [market.strip() for market in ODDS_API_MARKETS.split(",") if market.strip()]
+        market_last_updates[market_key] = market.get("last_update")
+    return markets, market_last_updates
+
+
+def _simplify_odds_event(event: dict[str, Any]) -> dict[str, Any]:
+    bookmakers = event.get("bookmakers") or []
+    bookmaker = next(
+        (item for item in bookmakers if item.get("key") == ODDS_API_BOOKMAKER),
+        bookmakers[0] if bookmakers else {},
+    )
+    markets, market_last_updates = _simplify_bookmaker_markets(bookmaker)
+    configured_markets = _market_keys(ODDS_API_MARKETS)
     available_markets = sorted(markets)
     return {
         "event_id": event.get("id"),
@@ -252,6 +284,7 @@ def _simplify_odds_event(event: dict[str, Any]) -> dict[str, Any]:
         "available_markets": available_markets,
         "missing_markets": [market for market in configured_markets if market not in available_markets],
         "markets": markets,
+        "market_last_updates": market_last_updates,
     }
 
 
@@ -316,6 +349,77 @@ def _fetch_odds_for_day(day: str) -> dict[str, Any]:
     return payload
 
 
+@lru_cache(maxsize=256)
+def _fetch_additional_odds(event_id: str) -> dict[str, Any]:
+    requested_markets = _market_keys(ODDS_API_ADDITIONAL_MARKETS)
+    if not requested_markets:
+        return {
+            "markets_requested": [],
+            "quota": {},
+            "event": None,
+        }
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "bookmakers": ODDS_API_BOOKMAKER,
+        "markets": ",".join(requested_markets),
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+    }
+    started = clock.perf_counter()
+    logger.info(
+        "odds_api.additional_request.start",
+        extra={"event_id": event_id, "markets": requested_markets},
+    )
+    response = httpx.get(
+        f"{ODDS_API_URL}/sports/{ODDS_API_SPORT}/events/{event_id}/odds",
+        params=params,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    raw_event = response.json()
+    if isinstance(raw_event, list):
+        raw_event = raw_event[0] if raw_event else {}
+    event = _simplify_odds_event(raw_event) if raw_event else None
+    payload = {
+        "markets_requested": requested_markets,
+        "quota": {
+            "requests_last": response.headers.get("x-requests-last"),
+            "requests_used": response.headers.get("x-requests-used"),
+            "requests_remaining": response.headers.get("x-requests-remaining"),
+        },
+        "event": event,
+    }
+    logger.info(
+        "odds_api.additional_request.complete",
+        extra={
+            "event_id": event_id,
+            "available_markets": event.get("available_markets", []) if event else [],
+            "requests_last": payload["quota"]["requests_last"],
+            "requests_remaining": payload["quota"]["requests_remaining"],
+            "elapsed_seconds": round(clock.perf_counter() - started, 3),
+        },
+    )
+    return payload
+
+
+def _merge_odds_events(base_event: dict[str, Any], additional_event: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base_event)
+    merged["markets"] = {
+        **base_event.get("markets", {}),
+        **additional_event.get("markets", {}),
+    }
+    merged["market_last_updates"] = {
+        **base_event.get("market_last_updates", {}),
+        **additional_event.get("market_last_updates", {}),
+    }
+    merged["available_markets"] = sorted(merged["markets"])
+    all_requested = _market_keys(ODDS_API_MARKETS) + _market_keys(ODDS_API_ADDITIONAL_MARKETS)
+    merged["missing_markets"] = [
+        market for market in all_requested if market not in merged["available_markets"]
+    ]
+    return merged
+
+
 def _match_odds_event(match: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any] | None:
     home = _normalize_team_name(match["home_team"])
     away = _normalize_team_name(match["away_team"])
@@ -330,6 +434,20 @@ def _match_odds_event(match: dict[str, Any], events: list[dict[str, Any]]) -> di
 def odds_research_for_match(match: dict[str, Any]) -> dict[str, Any]:
     day_payload = _fetch_odds_for_day(match["match_date"])
     event = _match_odds_event(match, day_payload["events"])
+    additional_quota = {}
+    additional_error = None
+    if event and event.get("event_id") and _market_keys(ODDS_API_ADDITIONAL_MARKETS):
+        try:
+            additional_payload = _fetch_additional_odds(event["event_id"])
+            additional_quota = additional_payload["quota"]
+            if additional_payload["event"]:
+                event = _merge_odds_events(event, additional_payload["event"])
+        except httpx.HTTPError as error:
+            additional_error = _safe_http_error(error)
+            logger.warning(
+                "odds_api.additional_request.failed",
+                extra={"event_id": event["event_id"], "error": additional_error},
+            )
     candidate_matches = [
         {"event_id": item.get("event_id"), "match": item.get("match"), "commence_time": item.get("commence_time")}
         for item in day_payload["events"]
@@ -341,10 +459,15 @@ def odds_research_for_match(match: dict[str, Any]) -> dict[str, Any]:
         "bookmaker": day_payload["bookmaker"],
         "bookmaker_key": day_payload["bookmaker_key"],
         "markets_requested": day_payload["markets_requested"],
+        "additional_markets_requested": _market_keys(ODDS_API_ADDITIONAL_MARKETS),
         "odds_format": day_payload["odds_format"],
         "match_date": day_payload["match_date"],
         "utc_window": day_payload["utc_window"],
-        "quota": day_payload["quota"],
+        "quota": {
+            "base": day_payload["quota"],
+            "additional": additional_quota,
+        },
+        "additional_markets_error": additional_error,
         "matched_event": event,
         "candidate_matches": candidate_matches if event is None else [],
     }
