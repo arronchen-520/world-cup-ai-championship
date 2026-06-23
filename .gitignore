@@ -1,7 +1,12 @@
 .env
+.env.example
 .venv/
 __pycache__/
 .pytest_cache/
 *.pyc
+data/
 data/*.db-shm
 data/*.db-wal
+WALKTHROUGH.md
+ai_world_cup_walkthrough.ipynb
+test_odds_api.py

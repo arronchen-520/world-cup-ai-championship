@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import gradio as gr
 
-from config import MATCH_TIMEZONE, MODELS
+from config import GRADIO_SHARE, MATCH_TIMEZONE, MODELS
 from database import get_day, get_leaderboard, initialize_database
 from logging_config import configure_logging
 from pipeline import run_for_date
@@ -211,4 +211,5 @@ def build_app() -> gr.Blocks:
 if __name__ == "__main__":
     demo = build_app()
     launch_options = {"css": demo.app_css} if demo.css_on_launch else {}
+    launch_options["share"] = GRADIO_SHARE
     demo.launch(**launch_options)

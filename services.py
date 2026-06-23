@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time as clock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time, timedelta, timezone
+from functools import lru_cache
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,13 +19,18 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from config import (
     EVALUATION_MODEL, FOOTBALL_DATA_API_KEY, FOOTBALL_DATA_COMPETITION, FOOTBALL_DATA_URL,
-    MATCH_TIMEZONE, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
+    MATCH_TIMEZONE, ODDS_API_BOOKMAKER, ODDS_API_KEY, ODDS_API_MARKETS, ODDS_API_SPORT,
+    ODDS_API_URL, OPENROUTER_API_KEY, OPENROUTER_URL, REQUEST_TIMEOUT_SECONDS,
     TAVILY_API_KEY, TAVILY_MAX_RESULTS, TAVILY_SEARCH_DEPTH,
 )
 
 
 SOCIAL_DOMAINS = ["instagram.com", "facebook.com", "x.com", "tiktok.com", "youtube.com"]
 logger = logging.getLogger(__name__)
+
+BOOKMAKER_TITLES = {
+    "bovada": "Bovada",
+}
 
 
 class RankedAnalyst(BaseModel):
@@ -198,6 +205,151 @@ def extract_actual_result(raw_match: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _odds_day_window(day: str) -> tuple[str, str]:
+    local_zone = ZoneInfo(MATCH_TIMEZONE)
+    match_day = date.fromisoformat(day)
+    local_start = datetime.combine(match_day, time.min, tzinfo=local_zone)
+    utc_start = local_start.astimezone(timezone.utc)
+    utc_end = (local_start + timedelta(days=1)).astimezone(timezone.utc)
+    return utc_start.isoformat().replace("+00:00", "Z"), utc_end.isoformat().replace("+00:00", "Z")
+
+
+def _normalize_team_name(name: str) -> str:
+    normalized = name.lower()
+    replacements = {
+        "united states": "usa",
+        "u.s.a.": "usa",
+        "u.s.": "usa",
+        "korea republic": "south korea",
+        "ir iran": "iran",
+    }
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _simplify_odds_event(event: dict[str, Any]) -> dict[str, Any]:
+    bookmaker = (event.get("bookmakers") or [{}])[0]
+    markets = {}
+    for market in bookmaker.get("markets", []):
+        markets[market.get("key")] = [
+            {
+                "name": outcome.get("name"),
+                "price": outcome.get("price"),
+                "point": outcome.get("point"),
+            }
+            for outcome in market.get("outcomes", [])
+        ]
+    configured_markets = [market.strip() for market in ODDS_API_MARKETS.split(",") if market.strip()]
+    available_markets = sorted(markets)
+    return {
+        "event_id": event.get("id"),
+        "match": f"{event.get('home_team')} vs {event.get('away_team')}",
+        "home_team": event.get("home_team"),
+        "away_team": event.get("away_team"),
+        "commence_time": event.get("commence_time"),
+        "bookmaker": bookmaker.get("title") or BOOKMAKER_TITLES.get(ODDS_API_BOOKMAKER, ODDS_API_BOOKMAKER),
+        "available_markets": available_markets,
+        "missing_markets": [market for market in configured_markets if market not in available_markets],
+        "markets": markets,
+    }
+
+
+@lru_cache(maxsize=16)
+def _fetch_odds_for_day(day: str) -> dict[str, Any]:
+    if not ODDS_API_KEY:
+        raise RuntimeError("ODDS_API_KEY is not configured")
+    utc_start, utc_end = _odds_day_window(day)
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "bookmakers": ODDS_API_BOOKMAKER,
+        "markets": ODDS_API_MARKETS,
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+        "commenceTimeFrom": utc_start,
+        "commenceTimeTo": utc_end,
+    }
+    started = clock.perf_counter()
+    logger.info(
+        "odds_api.request.start",
+        extra={
+            "match_date": day,
+            "sport": ODDS_API_SPORT,
+            "bookmaker": ODDS_API_BOOKMAKER,
+            "markets": ODDS_API_MARKETS,
+        },
+    )
+    response = httpx.get(
+        f"{ODDS_API_URL}/sports/{ODDS_API_SPORT}/odds/",
+        params=params,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    events = [_simplify_odds_event(event) for event in response.json()]
+    payload = {
+        "provider": "the-odds-api.com",
+        "category": "betting_markets",
+        "sport": ODDS_API_SPORT,
+        "bookmaker": BOOKMAKER_TITLES.get(ODDS_API_BOOKMAKER, ODDS_API_BOOKMAKER),
+        "bookmaker_key": ODDS_API_BOOKMAKER,
+        "markets_requested": [market.strip() for market in ODDS_API_MARKETS.split(",") if market.strip()],
+        "odds_format": "decimal",
+        "match_date": day,
+        "utc_window": {"start": utc_start, "end": utc_end},
+        "quota": {
+            "requests_last": response.headers.get("x-requests-last"),
+            "requests_used": response.headers.get("x-requests-used"),
+            "requests_remaining": response.headers.get("x-requests-remaining"),
+        },
+        "events": events,
+    }
+    logger.info(
+        "odds_api.request.complete",
+        extra={
+            "match_date": day,
+            "event_count": len(events),
+            "requests_last": payload["quota"]["requests_last"],
+            "requests_remaining": payload["quota"]["requests_remaining"],
+            "elapsed_seconds": round(clock.perf_counter() - started, 3),
+        },
+    )
+    return payload
+
+
+def _match_odds_event(match: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    home = _normalize_team_name(match["home_team"])
+    away = _normalize_team_name(match["away_team"])
+    for event in events:
+        event_home = _normalize_team_name(event.get("home_team") or "")
+        event_away = _normalize_team_name(event.get("away_team") or "")
+        if {home, away} == {event_home, event_away}:
+            return event
+    return None
+
+
+def odds_research_for_match(match: dict[str, Any]) -> dict[str, Any]:
+    day_payload = _fetch_odds_for_day(match["match_date"])
+    event = _match_odds_event(match, day_payload["events"])
+    candidate_matches = [
+        {"event_id": item.get("event_id"), "match": item.get("match"), "commence_time": item.get("commence_time")}
+        for item in day_payload["events"]
+    ]
+    return {
+        "category": "betting_markets",
+        "source": "the-odds-api.com",
+        "provider": day_payload["provider"],
+        "bookmaker": day_payload["bookmaker"],
+        "bookmaker_key": day_payload["bookmaker_key"],
+        "markets_requested": day_payload["markets_requested"],
+        "odds_format": day_payload["odds_format"],
+        "match_date": day_payload["match_date"],
+        "utc_window": day_payload["utc_window"],
+        "quota": day_payload["quota"],
+        "matched_event": event,
+        "candidate_matches": candidate_matches if event is None else [],
+    }
+
+
 def research_match(match: dict[str, Any]) -> dict[str, Any]:
     if not TAVILY_API_KEY:
         raise RuntimeError("TAVILY_API_KEY is not configured")
@@ -211,7 +363,7 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
     fixture = f"{home} vs {away} FIFA World Cup 2026 {display_date}"
     started = clock.perf_counter()
     logger.info(
-        "tavily.research.start",
+        "match.research.start",
         extra={"match_key": match_key, "home_team": home, "away_team": away},
     )
     context_terms = "tactical preview"
@@ -223,13 +375,6 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
         {
             "category": "team_news_form_h2h",
             "query": f"{fixture} latest team news injuries suspensions predicted lineups last 5 matches head to head",
-        },
-        {
-            "category": "betting_markets",
-            "query": (
-                f"{fixture} latest bookmaker odds 1X2 double chance draw no bet Asian handicap "
-                "totals over under 1.5 2.5 3.5 both teams to score"
-            ),
         },
         {
             "category": "tactics_venue_weather_referee",
@@ -285,11 +430,12 @@ def research_match(match: dict[str, Any]) -> dict[str, Any]:
         )
         return normalized
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(search, search_specs))
+    results.insert(1, odds_research_for_match(match))
     research = {"searches": results}
     logger.info(
-        "tavily.research.complete",
+        "match.research.complete",
         extra={
             "match_key": match_key,
             "research_characters": len(json.dumps(research, ensure_ascii=False)),
@@ -305,8 +451,8 @@ Analyze {match['home_team']} vs {match['away_team']} in {match['competition']} o
 Fixture details: group={match.get('group_name') or 'unknown'}, kickoff={match.get('kickoff') or 'unknown'},
 venue={match.get('venue') or 'unknown'}, referees={json.dumps(match.get('referees', []), ensure_ascii=False)}.
 
-Use the supplied Tavily results as current evidence, but also add your own independent football analysis,
-tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
+Use the supplied retrieved evidence as current evidence, including Tavily search results and structured odds,
+but also add your own independent football analysis, tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
 Never invent current injuries, lineups, or odds. Flag stale/conflicting information and account for bookmaker margin.
 Treat every result and predicted score as regulation time only, excluding extra time and penalties.
 
@@ -385,7 +531,7 @@ Return Markdown in exactly this order:
 - 最终信心：0-100
 
 ## 综合分析
-Explain model agreement/disagreement, the strongest Tavily evidence, your own independent synthesis,
+Explain model agreement/disagreement, the strongest retrieved evidence, your own independent synthesis,
 and invalidation risks. End with a short responsible-gambling notice. Betting is entertainment, not income.
 If there is no defensible edge, explicitly recommend “不下注”. Put the final actionable answer first.
 最终结论不超过 220 个中文字符；综合分析不超过 800 个中文字符。
