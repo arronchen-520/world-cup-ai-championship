@@ -76,6 +76,26 @@ jobs:
           source_sha="$(git rev-parse HEAD)"
           git switch --orphan hf-space-sync
           git checkout "$source_sha" -- .
+          {
+            cat <<'EOF'
+          ---
+          title: World Cup AI Championship
+          emoji: 📊
+          colorFrom: green
+          colorTo: purple
+          sdk: gradio
+          sdk_version: 6.19.0
+          python_version: "3.13"
+          app_file: app.py
+          pinned: false
+          license: mit
+          short_description: AI-powered FIFA World Cup model championship
+          ---
+
+          EOF
+            cat README.md
+          } > README.md.with-space-metadata
+          mv README.md.with-space-metadata README.md
           git add -A
           if [ -f data/championship.db ]; then
             git add -f data/championship.db

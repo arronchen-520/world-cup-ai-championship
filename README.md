@@ -1,17 +1,3 @@
----
-title: World Cup AI Championship
-emoji: 📊
-colorFrom: green
-colorTo: purple
-sdk: gradio
-sdk_version: 6.19.0
-python_version: "3.13"
-app_file: app.py
-pinned: false
-license: mit
-short_description: AI-powered FIFA World Cup model championship
----
-
 # AI World Cup Championship
 
 **Live app:** [huggingface.co/spaces/xchen49/world-cup-ai-championship](https://huggingface.co/spaces/xchen49/world-cup-ai-championship)
@@ -40,15 +26,20 @@ The public Gradio app is read-only by default: it loads saved analysis from the 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    A["GitHub Actions schedule"] --> B["run_daily.py"]
-    B --> C["Fixtures + research + odds"]
-    C --> D["Five analyst models"]
-    D --> E["Master synthesis"]
-    E --> F["SQLite database"]
-    F --> G["GitHub LFS"]
-    G --> H["Hugging Face Space"]
-    H --> I["Public Gradio dashboard"]
+flowchart TD
+    A["GitHub Actions<br/>Chicago midnight schedule"] --> B["run_daily.py"]
+    B --> C["Fixture data<br/>football-data.org"]
+    B --> D["Research context<br/>Tavily"]
+    B --> E["Odds context<br/>The Odds API"]
+    C --> F["Five analyst models<br/>OpenRouter"]
+    D --> F
+    E --> F
+    F --> G["Master synthesis"]
+    G --> H["SQLite database<br/>data/championship.db"]
+    H --> I["GitHub LFS<br/>saved history"]
+    I --> J["Clean snapshot deploy"]
+    J --> K["Hugging Face Space"]
+    K --> L["Public read-only<br/>Gradio dashboard"]
 ```
 
 ## Data And Persistence
