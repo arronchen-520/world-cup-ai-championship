@@ -453,7 +453,14 @@ venue={match.get('venue') or 'unknown'}, referees={json.dumps(match.get('referee
 
 Use the supplied retrieved evidence as current evidence, including Tavily search results and structured odds,
 but also add your own independent football analysis, tactical reasoning, and general knowledge. Clearly distinguish retrieved facts from your own analysis.
-Never invent current injuries, lineups, or odds. Flag stale/conflicting information and account for bookmaker margin.
+Never invent current injuries, lineups, or listed odds. Flag stale/conflicting information and account for bookmaker margin.
+The supplied structured odds are context, not a limit on valid betting recommendations. You may recommend any football bet type
+you believe has value, including markets not listed in the supplied odds, but if no listed price exists you must give a fair
+target decimal-odds range such as "only if 1.85+" or "value around 2.10-2.30".
+Conservative bet = high-confidence, high-probability angle; low/negative odds are acceptable if the probability is strong.
+Aggressive bet = positive-odds/value-seeking angle; prefer plus-money or higher decimal odds with a clear risk/reward case.
+Do not default to "不下注" only because the price is short. Use "不下注"/"无" only when you cannot identify a credible
+high-probability conservative angle or a credible value-priced aggressive angle after comparing plausible candidates.
 Treat every result and predicted score as regulation time only, excluding extra time and penalties.
 
 Return Markdown in exactly this order:
@@ -461,15 +468,16 @@ Return Markdown in exactly this order:
 - 赛果：主胜 / 平局 / 客胜
 - 预测比分：
 - 主胜 / 平局 / 客胜概率：total must equal 100%
-- 保守投注：
-- 进取投注：没有价值时写“无”
+- 保守投注：推荐项 + 当前赔率或目标赔率区间；若不下注，必须给出简短原因
+- 进取投注：推荐项 + 当前赔率或目标赔率区间；没有可信价值时才写“无”
 - 信心：0-100
 
 ## 详细分析
 ### Tavily 证据
 ### 独立分析
+### 投注候选比较
 ### 主要风险
-When evidence is weak, recommend “不下注”. Put the short actionable answer before all rationale.
+When evidence is weak, be cautious, but still separate "no reliable evidence" from "short price". Put the short actionable answer before all rationale.
 快速结论不超过 180 个中文字符；详细分析不超过 600 个中文字符。
 Write the entire response in Simplified Chinese, including all headings and explanations.
 
@@ -518,7 +526,13 @@ def run_analysts(models: list[dict[str, str]], prompt: str) -> dict[str, str]:
 def master_prompt(match: dict[str, Any], research: dict[str, Any], outputs: dict[str, str]) -> str:
     return f"""Act as the chair of a football prediction panel. Synthesize the independent reports below.
 Do not decide by majority vote alone: weigh source quality, reasoning, market prices, injuries, and disagreement.
-Never invent facts or odds. If there is no defensible edge, explicitly recommend No bet.
+Never invent facts or listed odds. The supplied structured odds are context, not a limit on valid betting recommendations.
+You may recommend any football bet type that has a defensible edge; if the bet is not priced in supplied odds, give a fair
+target decimal-odds range such as "only if 1.85+" or "value around 2.10-2.30".
+Conservative bet = high-confidence, high-probability angle; low/negative odds are acceptable if your probability is strong.
+Aggressive bet = positive-odds/value-seeking angle; prefer plus-money or higher decimal odds with a clear risk/reward case.
+Do not inherit "无" mechanically from the panel. Re-check the full candidate set and recommend No bet only when there is
+no credible high-probability conservative angle or credible value-priced aggressive angle.
 Treat every result and predicted score as regulation time only, excluding extra time and penalties.
 
 Return Markdown in exactly this order:
@@ -526,14 +540,15 @@ Return Markdown in exactly this order:
 - 赛果：
 - 预测比分：
 - 主胜 / 平局 / 客胜概率：total must equal 100%
-- 保守投注：
-- 进取投注：没有价值时写“无”
+- 保守投注：推荐项 + 当前赔率或目标赔率区间；若不下注，必须给出简短原因
+- 进取投注：推荐项 + 当前赔率或目标赔率区间；没有可信价值时才写“无”
 - 最终信心：0-100
 
 ## 综合分析
 Explain model agreement/disagreement, the strongest retrieved evidence, your own independent synthesis,
 and invalidation risks. End with a short responsible-gambling notice. Betting is entertainment, not income.
-If there is no defensible edge, explicitly recommend “不下注”. Put the final actionable answer first.
+If there is no defensible edge after comparing plausible conservative and aggressive candidates, explicitly recommend “不下注”.
+Put the final actionable answer first.
 最终结论不超过 220 个中文字符；综合分析不超过 800 个中文字符。
 Write the entire final recommendation in Simplified Chinese.
 
