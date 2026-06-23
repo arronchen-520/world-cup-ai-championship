@@ -73,7 +73,9 @@ jobs:
           git fetch --depth=1 space main || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          source_sha="$(git rev-parse HEAD)"
           git switch --orphan hf-space-sync
+          git checkout "$source_sha" -- .
           git add -A
           if [ -f data/championship.db ]; then
             git add -f data/championship.db
