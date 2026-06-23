@@ -44,10 +44,17 @@ jobs:
           fi
       - name: Persist updated SQLite database
         run: |
-          if [ -z "$(git status --porcelain -- data/championship.db)" ]; then exit 0; fi
+          if [ ! -f data/championship.db ]; then
+            echo "data/championship.db was not created; nothing to persist."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f data/championship.db
+          if git diff --cached --quiet -- data/championship.db; then
+            echo "data/championship.db is unchanged; nothing to commit."
+            exit 0
+          fi
           git commit -m "data: daily football analysis"
           git push
       - name: Sync app and data to Hugging Face Space

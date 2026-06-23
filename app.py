@@ -154,6 +154,66 @@ def build_app() -> gr.Blocks:
                   background:#f8f9fa}
     .leaderboard-card {border:2px solid #f4b942; border-radius:14px; padding:16px;
                        background:linear-gradient(135deg,#fff8dd,#ffffff)}
+    @media (prefers-color-scheme: dark) {
+      .gradio-container {
+        --body-background-fill: #0f172a;
+        --background-fill-primary: #0f172a;
+        --background-fill-secondary: #111827;
+        --block-background-fill: #111827;
+        --block-border-color: #334155;
+        --body-text-color: #e5e7eb;
+        --input-background-fill: #111827;
+        --input-border-color: #475569;
+      }
+      .gradio-container input,
+      .gradio-container textarea,
+      .gradio-container select {
+        background: #111827 !important;
+        color: #e5e7eb !important;
+        border-color: #475569 !important;
+      }
+      .gradio-container input::placeholder,
+      .gradio-container textarea::placeholder {
+        color: #94a3b8 !important;
+      }
+      .model-card {
+        border-color: #334155;
+        background: linear-gradient(180deg,#111827,#0f172a);
+      }
+      .final-card {
+        border-color: #22d3ee;
+        background: linear-gradient(135deg,#0f172a,#111827);
+      }
+      .review-card {
+        border-color: #475569;
+        background: #111827;
+      }
+      .leaderboard-card {
+        border-color: #f59e0b;
+        background: linear-gradient(135deg,#1f2937,#111827);
+      }
+    }
+    .dark .gradio-container,
+    .gradio-container.dark {
+      --body-background-fill: #0f172a;
+      --background-fill-primary: #0f172a;
+      --background-fill-secondary: #111827;
+      --block-background-fill: #111827;
+      --block-border-color: #334155;
+      --body-text-color: #e5e7eb;
+      --input-background-fill: #111827;
+      --input-border-color: #475569;
+    }
+    .dark .gradio-container input,
+    .dark .gradio-container textarea,
+    .dark .gradio-container select,
+    .gradio-container.dark input,
+    .gradio-container.dark textarea,
+    .gradio-container.dark select {
+      background: #111827 !important;
+      color: #e5e7eb !important;
+      border-color: #475569 !important;
+    }
     """
     gradio_major = int(gr.__version__.split(".", 1)[0])
     blocks_options = {"title": "AI World Cup Championship"}
