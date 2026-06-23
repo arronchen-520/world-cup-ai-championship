@@ -25,9 +25,25 @@ def _date_string(value: str | datetime | None) -> str:
     return str(value)[:10]
 
 
+def _time_string(value: str | None) -> str:
+    if not value:
+        return "TBD"
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%H:%M")
+    except ValueError:
+        pass
+    if "T" in text:
+        return text.split("T", 1)[1][:5]
+    parts = text.split()
+    if len(parts) > 1 and parts[0].count("-") == 2:
+        return parts[1][:5]
+    return text
+
+
 def _choices(rows: list[dict]) -> list[tuple[str, str]]:
     return [
-        (f"{row.get('kickoff_local') or row.get('kickoff') or 'TBD'} | {row['home_team']} vs {row['away_team']}", row["match_key"])
+        (f"{_time_string(row.get('kickoff_local') or row.get('kickoff'))} | {row['home_team']} vs {row['away_team']}", row["match_key"])
         for row in rows
     ]
 
@@ -223,7 +239,10 @@ def build_app() -> gr.Blocks:
     with gr.Blocks(**blocks_options) as demo:
         rows_state = gr.State([])
         gr.HTML("<div class='hero'><h1>AI World Cup Championship</h1><p>Five analysts. One final whistle.</p></div>")
-        gr.Markdown("预测仅供参考。赔率会变化，模型可能出错，任何投注都没有保证。")
+        gr.Markdown(
+            "**免责声明：**本页面仅用于 AI Championship 模型比赛展示与娱乐研究，不构成博彩、投注、投资或财务建议。"
+            "模型输出可能出错，赔率和赛况会变化，请勿将本页面内容作为下注依据。"
+        )
         with gr.Row():
             day_input = gr.DateTime(label="Match date", value=today, include_time=False, type="string")
             load_button = gr.Button("Load saved", variant="secondary")

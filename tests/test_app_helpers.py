@@ -13,6 +13,17 @@ def test_choices():
     assert _choices(rows) == [("TBD | A vs B", "x")]
 
 
+def test_choices_show_time_without_repeating_date():
+    rows = [{
+        "match_key": "x",
+        "kickoff": "2026-06-23T20:00:00Z",
+        "kickoff_local": "2026-06-23 15:00",
+        "home_team": "A",
+        "away_team": "B",
+    }]
+    assert _choices(rows) == [("15:00 | A vs B", "x")]
+
+
 def test_split_output():
     summary, detail = _split_output("## 快速结论\n主胜\n## 详细分析\n证据", "## 详细分析")
     assert "主胜" in summary
