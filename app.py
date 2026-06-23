@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import gradio as gr
 
-from config import GRADIO_SHARE, MATCH_TIMEZONE, MODELS
+from config import ENABLE_GRADIO_RUN, GRADIO_SHARE, MATCH_TIMEZONE, MODELS
 from database import get_day, get_leaderboard, initialize_database
 from logging_config import configure_logging
 from pipeline import run_for_date
@@ -227,7 +227,8 @@ def build_app() -> gr.Blocks:
         with gr.Row():
             day_input = gr.DateTime(label="Match date", value=today, include_time=False, type="string")
             load_button = gr.Button("Load saved", variant="secondary")
-            analyze_button = gr.Button("Run / refresh analysis", variant="primary")
+            if ENABLE_GRADIO_RUN:
+                analyze_button = gr.Button("Run / refresh analysis", variant="primary")
         status = gr.Markdown()
         match_select = gr.Dropdown(label="Match", choices=[])
         match_header = gr.Markdown()
@@ -256,9 +257,10 @@ def build_app() -> gr.Blocks:
         load_button.click(load_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs
         )
-        analyze_button.click(analyze_date, day_input, date_outputs).then(
-            show_match, [match_select, rows_state], outputs
-        )
+        if ENABLE_GRADIO_RUN:
+            analyze_button.click(analyze_date, day_input, date_outputs).then(
+                show_match, [match_select, rows_state], outputs
+            )
         match_select.change(show_match, [match_select, rows_state], outputs)
         demo.load(load_date, day_input, date_outputs).then(
             show_match, [match_select, rows_state], outputs

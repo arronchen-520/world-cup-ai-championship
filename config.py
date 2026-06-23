@@ -14,6 +14,7 @@ MATCH_TIMEZONE = os.getenv("MATCH_TIMEZONE", "America/Chicago")
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", ROOT / "data" / "championship.db"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 GRADIO_SHARE = os.getenv("GRADIO_SHARE", "true").lower() in {"1", "true", "yes", "on"}
+ENABLE_GRADIO_RUN = os.getenv("ENABLE_GRADIO_RUN", "false").lower() in {"1", "true", "yes", "on"}
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "")
