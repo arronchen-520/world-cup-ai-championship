@@ -60,45 +60,9 @@ jobs:
           fi
           git commit -m "data: daily football analysis"
           git push
-      - name: Sync app and data to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          if [ -z "$HF_TOKEN" ]; then
-            echo "HF_TOKEN is not configured; skipping Hugging Face sync."
-            exit 0
-          fi
-          git remote remove space || true
-          git remote add space "https://xchen49:${HF_TOKEN}@huggingface.co/spaces/xchen49/world-cup-ai-championship"
-          git fetch --depth=1 space main || true
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          source_sha="$(git rev-parse HEAD)"
-          git switch --orphan hf-space-sync
-          git checkout "$source_sha" -- .
-          {
-            cat <<'EOF'
-          ---
-          title: World Cup AI Championship
-          emoji: 📊
-          colorFrom: green
-          colorTo: purple
-          sdk: gradio
-          sdk_version: 6.19.0
-          python_version: "3.13"
-          app_file: app.py
-          pinned: false
-          license: mit
-          short_description: AI-powered FIFA World Cup model championship
-          ---
 
-          EOF
-            cat README.md
-          } > README.md.with-space-metadata
-          mv README.md.with-space-metadata README.md
-          git add -A
-          if [ -f data/championship.db ]; then
-            git add -f data/championship.db
-          fi
-          git commit -m "sync Hugging Face Space"
-          git push --force-with-lease space hf-space-sync:main
+  deploy-space:
+    needs: analyze
+    if: ${{ always() && needs.analyze.result == 'success' }}
+    uses: ./.github/workflows/deploy-space.yml
+    secrets: inherit

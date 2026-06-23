@@ -1,0 +1,54 @@
+name: Deploy Hugging Face Space
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      HF_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-hugging-face-space
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          lfs: true
+      - run: git lfs install --local
+      - name: Push clean snapshot to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "HF_TOKEN is not configured; skipping Hugging Face deployment."
+            exit 0
+          fi
+
+          git remote remove space || true
+          git remote add space "https://xchen49:${HF_TOKEN}@huggingface.co/spaces/xchen49/world-cup-ai-championship"
+          git fetch --depth=1 space main
+          expected_space_sha="$(git rev-parse space/main)"
+          source_sha="$(git rev-parse HEAD)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan hf-space-deploy
+          git read-tree --reset -u "$source_sha"
+          git add -A
+          git commit -m "sync Hugging Face Space"
+
+          git push \
+            --force-with-lease="refs/heads/main:${expected_space_sha}" \
+            space hf-space-deploy:main

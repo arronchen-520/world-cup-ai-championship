@@ -95,7 +95,12 @@ python app.py
 
 ## Automation
 
-The GitHub workflow can be run manually or on schedule. The schedule fires at UTC `05:05` and `06:05`; a midnight guard ensures only the invocation matching Chicago midnight actually performs analysis.
+Two GitHub workflows keep analysis and deployment separate:
+
+- `Daily AI football analysis` runs manually or at UTC `05:05` and `06:05`. A midnight guard ensures only the invocation matching Chicago midnight performs analysis, then commits the updated SQLite database to GitHub.
+- `Deploy Hugging Face Space` mirrors the latest GitHub `main` snapshot to the read-only Space. It runs after every push to `main`, can be started manually without calling paid APIs, and is also called directly by the daily workflow after its database update.
+
+GitHub is the single source of truth for both code and data. Normal development only needs a push to `origin/main`; Space deployment is automatic.
 
 Required GitHub Actions secrets:
 
@@ -105,7 +110,7 @@ Required GitHub Actions secrets:
 - `ODDS_API_KEY`
 - `HF_TOKEN`
 
-For the first manual run, provide a date such as `2026-06-23` so the workflow runs immediately instead of waiting for the midnight guard.
+For the first manual analysis run, provide a date such as `2026-06-23` so it runs immediately instead of waiting for the midnight guard. To redeploy the existing app and database without running analysis, manually run `Deploy Hugging Face Space`.
 
 ## 中文
 
