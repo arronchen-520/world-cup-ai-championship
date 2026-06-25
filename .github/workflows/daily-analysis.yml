@@ -2,9 +2,9 @@ name: Daily AI football analysis
 
 on:
   schedule:
-    # Chicago midnight is 05:05 UTC in CDT and 06:05 UTC in CST.
-    # The Python guard ensures only the correct invocation runs.
-    - cron: "5 5,6 * * *"
+    # Run once at 08:15 UTC (02:15 CST / 03:15 CDT). GitHub schedules can be
+    # delayed, so use the Chicago date when the runner actually starts.
+    - cron: "15 8 * * *"
   workflow_dispatch:
     inputs:
       date:
@@ -43,7 +43,7 @@ jobs:
           if [ -n "${{ inputs.date }}" ]; then
             python run_daily.py --date "${{ inputs.date }}"
           else
-            python run_daily.py --midnight-guard
+            python run_daily.py
           fi
       - name: Persist updated SQLite database
         run: |
