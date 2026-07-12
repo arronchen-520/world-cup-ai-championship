@@ -1,6 +1,7 @@
 from datetime import datetime
+from unittest.mock import patch
 
-from app import _choices, _date_string, _evaluation_markdown, _split_output, show_match
+from app import _choices, _date_string, _evaluation_markdown, _split_output, load_date, show_match
 
 
 def test_date_string():
@@ -22,6 +23,23 @@ def test_choices_show_time_without_repeating_date():
         "away_team": "B",
     }]
     assert _choices(rows) == [("15:00 | A vs B", "x")]
+
+
+def test_load_date_allows_saved_future_matches():
+    rows = [{
+        "match_key": "future-1", "kickoff": "2099-07-14T20:00:00Z",
+        "kickoff_local": "2099-07-14T16:00:00-04:00",
+        "home_team": "A", "away_team": "B",
+    }]
+    with patch("app.get_day", return_value=rows), patch(
+        "app._leaderboard_markdown", return_value="leaderboard"
+    ):
+        dropdown, status, loaded_rows, leaderboard = load_date("2099-07-14")
+
+    assert dropdown["value"] == "future-1"
+    assert status == "Found 1 saved match(es) for 2099-07-14."
+    assert loaded_rows == rows
+    assert leaderboard == "leaderboard"
 
 
 def test_split_output():

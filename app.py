@@ -96,8 +96,6 @@ def _leaderboard_markdown() -> str:
 
 def load_date(value: str | datetime | None):
     day = _date_string(value)
-    if date.fromisoformat(day) > datetime.now(ZoneInfo(MATCH_TIMEZONE)).date():
-        raise gr.Error("Please choose today or an earlier date.")
     rows = get_day(day)
     choices = _choices(rows)
     selected = choices[0][1] if choices else None
