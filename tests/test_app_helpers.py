@@ -52,7 +52,7 @@ def test_show_match_returns_master_before_analysts():
         "competition": "World Cup", "group_name": None, "kickoff": None,
         "kickoff_local": None, "venue": None, "source": "test", "referees": [],
         "model_outputs": {
-            "gpt-5.5": "## 快速结论\nanalyst\n## 详细分析\ndetail",
+            "gpt-5.6-sol": "## 快速结论\nanalyst\n## 详细分析\ndetail",
         },
         "final_output": "## 最终结论\nmaster\n## 综合分析\nmaster detail",
         "evaluation": None,

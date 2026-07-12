@@ -11,6 +11,12 @@ from typing import Any, Iterator
 from config import DATABASE_PATH
 
 
+LEGACY_MODEL_ID = "gpt-5.5"
+CURRENT_MODEL_ID = "gpt-5.6-sol"
+LEGACY_MODEL_SLUG = "openai/gpt-5.5"
+CURRENT_MODEL_SLUG = "openai/gpt-5.6-sol"
+
+
 @contextmanager
 def connect(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +92,81 @@ def initialize_database(path: Path = DATABASE_PATH) -> None:
         for legacy_name in ("city",):
             if legacy_name in columns:
                 db.execute(f"ALTER TABLE matches DROP COLUMN {legacy_name}")
+        _migrate_gpt_55_model_ids(db)
+
+
+def _migrate_gpt_55_model_ids(db: sqlite3.Connection) -> None:
+    """Relabel persisted GPT-5.5 results so historical rows match the current UI model ID."""
+    analysis_rows = db.execute(
+        "SELECT match_key, model_outputs_json FROM analyses"
+    ).fetchall()
+    for row in analysis_rows:
+        outputs = json.loads(row["model_outputs_json"])
+        if LEGACY_MODEL_ID not in outputs:
+            continue
+        if CURRENT_MODEL_ID not in outputs:
+            outputs[CURRENT_MODEL_ID] = outputs[LEGACY_MODEL_ID]
+        del outputs[LEGACY_MODEL_ID]
+        db.execute(
+            "UPDATE analyses SET model_outputs_json = ? WHERE match_key = ?",
+            (json.dumps(outputs, ensure_ascii=False), row["match_key"]),
+        )
+
+    evaluation_rows = db.execute(
+        "SELECT match_key, ranking_json, evaluator_model FROM match_evaluations"
+    ).fetchall()
+    for row in evaluation_rows:
+        ranking = json.loads(row["ranking_json"])
+        ranking_changed = False
+        for item in ranking:
+            if item.get("model_id") == LEGACY_MODEL_ID:
+                item["model_id"] = CURRENT_MODEL_ID
+                ranking_changed = True
+        evaluator_model = row["evaluator_model"]
+        migrated_evaluator = {
+            LEGACY_MODEL_ID: CURRENT_MODEL_ID,
+            LEGACY_MODEL_SLUG: CURRENT_MODEL_SLUG,
+        }.get(evaluator_model, evaluator_model)
+        if ranking_changed or migrated_evaluator != evaluator_model:
+            db.execute(
+                """UPDATE match_evaluations
+                   SET ranking_json = ?, evaluator_model = ? WHERE match_key = ?""",
+                (
+                    json.dumps(ranking, ensure_ascii=False),
+                    migrated_evaluator,
+                    row["match_key"],
+                ),
+            )
+
+    legacy_score_count = db.execute(
+        "SELECT COUNT(*) FROM model_scores WHERE model_id = ?",
+        (LEGACY_MODEL_ID,),
+    ).fetchone()[0]
+    legacy_standing_count = db.execute(
+        "SELECT COUNT(*) FROM model_standings WHERE model_id = ?",
+        (LEGACY_MODEL_ID,),
+    ).fetchone()[0]
+    db.execute(
+        """DELETE FROM model_scores AS legacy
+           WHERE legacy.model_id = ?
+             AND EXISTS (
+                 SELECT 1 FROM model_scores AS current
+                 WHERE current.match_key = legacy.match_key AND current.model_id = ?
+             )""",
+        (LEGACY_MODEL_ID, CURRENT_MODEL_ID),
+    )
+    db.execute(
+        "UPDATE model_scores SET model_id = ? WHERE model_id = ?",
+        (CURRENT_MODEL_ID, LEGACY_MODEL_ID),
+    )
+    if legacy_score_count or legacy_standing_count:
+        db.execute("DELETE FROM model_standings")
+        db.execute(
+            """INSERT INTO model_standings
+               (model_id, evaluated_matches, total_points, average_score, updated_at)
+               SELECT model_id, COUNT(*), SUM(points), AVG(points), CURRENT_TIMESTAMP
+               FROM model_scores GROUP BY model_id"""
+        )
 
 
 def save_match(match: dict[str, Any], path: Path = DATABASE_PATH) -> None:

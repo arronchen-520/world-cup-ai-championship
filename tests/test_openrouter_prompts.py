@@ -70,7 +70,7 @@ def test_master_prompt_blinds_model_identities_and_keeps_reports():
         "referees": [],
     }
     outputs = {
-        "gpt-5.5": "report from first analyst",
+        "gpt-5.6-sol": "report from first analyst",
         "claude-sonnet-4.6": "report from second analyst",
         "gemini-3.5-flash": "report from third analyst",
         "grok-4.3": "report from fourth analyst",

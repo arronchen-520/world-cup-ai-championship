@@ -36,10 +36,10 @@ ODDS_API_URL = "https://api.the-odds-api.com/v4"
 REQUEST_TIMEOUT_SECONDS = 90
 
 MODELS = [
-    {"id": "gpt-5.5", "model": "openai/gpt-5.5"},
+    {"id": "gpt-5.6-sol", "model": "openai/gpt-5.6-sol"},
     {"id": "claude-sonnet-4.6", "model": "anthropic/claude-sonnet-4.6"},
     {"id": "gemini-3.5-flash", "model": "google/gemini-3.5-flash"},
     {"id": "grok-4.3", "model": "x-ai/grok-4.3"},
     {"id": "deepseek-v3", "model": "deepseek/deepseek-chat"},
 ]
-MASTER_MODEL = os.getenv("MASTER_MODEL", "openai/gpt-5.5")
+MASTER_MODEL = os.getenv("MASTER_MODEL", "openai/gpt-5.6-sol")
